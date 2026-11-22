@@ -1,0 +1,9 @@
+# gitleaks config: default rules, plus an allowlist for deliberately fake secrets used in tests.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake secret-shaped strings that test the log redaction (tests/unit/test_config_and_logging.py)"
+paths = [
+  '''tests/unit/test_config_and_logging\.py''',
+]
