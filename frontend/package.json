@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "gen:api": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/lib/api-types.ts"
+    "test": "node --test \"src/**/*.test.ts\"",
+    "gen:api": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/lib/api-types.ts",
+    "gen:api:offline": "node scripts/gen-api-offline.mjs"
   },
   "dependencies": {
     "next": "16.4.6",
