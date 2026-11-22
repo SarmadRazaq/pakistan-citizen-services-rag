@@ -1,68 +1,18 @@
-"""Shape checks for evals/golden_set.jsonl (blueprint §10.1). The content is reviewed by the student."""
+"""Shape checks for evals/golden_set.jsonl (blueprint §10.1). The content is reviewed by the student.
+
+The item schema lives in `evals/golden.py`: one source of truth for these checks and the harness.
+"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from evals.golden import GoldenItem
 
 GOLDEN = Path(__file__).resolve().parents[2] / "evals" / "golden_set.jsonl"
 SEED = Path(__file__).resolve().parents[2] / "corpus" / "SEED_SOURCES.md"
-
-
-class GoldSource(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    file_name: str
-    pages: list[int] | None = None
-    section: str | None = None
-
-
-class GoldenItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    id: str = Field(pattern=r"^q_[a-z0-9_]+$")
-    question: str = Field(min_length=5)
-    language: Literal["en", "ur", "roman_ur"]
-    answer_language: Literal["en", "ur", "roman_ur"]
-    type: Literal[
-        "single_fact",
-        "paraphrase",
-        "multi_part",
-        "contradiction",
-        "ambiguity",
-        "advice_boundary",
-        "dated_information",
-        "unanswerable_absent",
-        "unanswerable_near_miss",
-    ]
-    answerable: bool
-    gold_sources: list[GoldSource]
-    agencies: list[str]
-    jurisdictions: list[Literal["federal", "punjab", "sindh", "kp"]]
-    expected_notices: list[Literal["not_advice", "referral", "dated_information", "emergency"]]
-    source_ids: list[str]
-    reference_answer: str = Field(min_length=10)
-    split: Literal["dev", "test"]
-    review_status: Literal["draft", "draft_needs_corpus_check", "approved", "dropped"]
-    author: str
-    reviewed_by: str | None
-    notes: str = ""
-
-    @model_validator(mode="after")
-    def _consistent(self) -> GoldenItem:
-        if self.answerable and not self.gold_sources:
-            raise ValueError("answerable items need at least one gold source")
-        if not self.answerable and self.gold_sources:
-            raise ValueError("unanswerable items must not have gold sources")
-        if self.type.startswith("unanswerable") and self.answerable:
-            raise ValueError("unanswerable types must have answerable=false")
-        if self.type == "advice_boundary" and "not_advice" not in self.expected_notices:
-            raise ValueError("advice_boundary items must expect the not_advice notice")
-        if self.review_status == "approved" and not self.reviewed_by:
-            raise ValueError("approved items must name the reviewer")
-        return self
 
 
 def _items() -> list[GoldenItem]:

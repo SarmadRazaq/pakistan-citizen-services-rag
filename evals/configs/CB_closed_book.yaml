@@ -1,0 +1,11 @@
+# CB closed_book: the contamination baseline (blueprint §10.2). The harness itself asks the generator
+# model directly through the NVIDIA API with NO sources, and the judge scores the answer against the
+# reference. A high closed-book score means the model already knows the answer, so RAG's gain over it
+# (not its absolute score) is what the retrieval is worth. Needs no service support.
+name: CB_closed_book
+description: "Generator answers from memory, no retrieval (contamination baseline)"
+kind: closed_book
+default: true
+closed_book:
+  model: null        # null = the first of GENERATION_MODELS (the service's default generator)
+  max_tokens: 700
