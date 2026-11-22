@@ -72,6 +72,11 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # gitleaks-action lists the PR's commits through the API on pull_request events,
+    # which needs pull-requests: read on top of the workflow-wide contents: read.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
