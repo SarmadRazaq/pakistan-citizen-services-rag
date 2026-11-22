@@ -22,3 +22,23 @@ slowapi
 pymupdf
 pytesseract
 pillow
+trafilatura
+selectolax
+python-docx
+python-pptx
+filetype
+defusedxml
+charset-normalizer
+# Tokenizer for token-based chunk sizes (BGE-M3 / XLM-R tokenizer files only, no model weights)
+tokenizers
+huggingface_hub
+
+# Generation, guardrails, orchestration (MVP slices 3 and 6)
+langchain-openai
+langchain-core
+langgraph
+rapidfuzz
+pyyaml
+
+# Heavy ML (torch, FlagEmbedding) lives in requirements-ml.in, and RAGAS in requirements-eval.in,
+# so CI and the CPU image stay light. Both are compiled with  -c requirements.txt.

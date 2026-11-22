@@ -1,4 +1,8 @@
-"""Shared FastAPI dependencies: settings, services and the current tenant."""
+"""Shared FastAPI dependencies: settings, services and the current tenant.
+
+Services are built once in `app/main.py` and stored on `app.state`. Routers depend on the
+protocol types from `app/protocols.py`, never on concrete classes.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,8 @@ from app.config import Settings
 from app.core.errors import AppError, ErrorCode
 from app.core.health import HealthService
 from app.core.tenancy import TenantContext
+from app.db.session import Database
+from app.protocols import AskService, DocumentService
 
 
 def get_app_settings(request: Request) -> Settings:
@@ -22,12 +28,36 @@ def get_health_service(request: Request) -> HealthService:
     return service
 
 
-async def get_tenant(request: Request) -> TenantContext:
-    """Resolve the JWT into a TenantContext.
+def _state(request: Request, name: str, work_package: str) -> object:
+    service = getattr(request.app.state, name, None)
+    if service is None:
+        raise AppError(ErrorCode.NOT_IMPLEMENTED, f"Implemented in work package {work_package}.")
+    return service
 
-    Contract only: work package A5 implements it (JWT `ver` check, role read from the DB,
-    scope from the request). Until then every protected route answers 401.
-    Tests override this dependency.
+
+def get_db(request: Request) -> Database:
+    db = _state(request, "db", "foundations")
+    assert isinstance(db, Database)
+    return db
+
+
+def get_document_service(request: Request) -> DocumentService:
+    service = _state(request, "documents", "ingestion")
+    assert isinstance(service, DocumentService)
+    return service
+
+
+def get_ask_service(request: Request) -> AskService:
+    service = _state(request, "ask", "ask")
+    assert isinstance(service, AskService)
+    return service
+
+
+async def get_tenant(request: Request) -> TenantContext:
+    """Resolve the JWT into a TenantContext (scope ALL; services narrow it with ctx.with_scope).
+
+    Contract: the auth work package replaces this body (JWT `ver` check, role read from the DB).
+    Until then every protected route answers 401. Tests override this dependency.
     """
     raise AppError(
         ErrorCode.UNAUTHORIZED,
@@ -39,3 +69,6 @@ async def get_tenant(request: Request) -> TenantContext:
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 HealthDep = Annotated[HealthService, Depends(get_health_service)]
 TenantDep = Annotated[TenantContext, Depends(get_tenant)]
+DbDep = Annotated[Database, Depends(get_db)]
+DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
+AskServiceDep = Annotated[AskService, Depends(get_ask_service)]

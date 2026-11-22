@@ -3,7 +3,9 @@
 ast-serialize==0.13.1
     # via mypy
 colorama==0.4.6 ; sys_platform == 'win32'
-    # via pytest
+    # via
+    #   -c requirements.txt
+    #   pytest
 coverage==7.17.4
     # via pytest-cov
 hypothesis==6.170.17

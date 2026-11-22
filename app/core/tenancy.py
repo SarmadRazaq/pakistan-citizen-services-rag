@@ -74,6 +74,18 @@ class TenantContext:
             public_owner_id=public_owner_id,
         )
 
+    def with_scope(self, scope: Scope) -> TenantContext:
+        """Narrow the readable set for one request (get_tenant builds Scope.ALL; services narrow it)."""
+        if self.is_system:
+            return self
+        return TenantContext.for_user(
+            self.user_id,
+            self.role,
+            scope,
+            request_id=self.request_id,
+            public_owner_id=self.public_owner_id,
+        )
+
     @property
     def is_admin(self) -> bool:
         return self.role is Role.ADMIN

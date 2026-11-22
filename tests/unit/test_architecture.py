@@ -37,6 +37,7 @@ def test_routers_do_not_import_storage_or_models_directly() -> None:
     offenders = {
         str(path.relative_to(APP)): sorted(n for n in _imports(path) if n.startswith(forbidden))
         for path in (APP / "api").glob("*.py")
+        if path.name != "deps.py"  # the dependency-injection point may hand out the DB handle
     }
     assert {k: v for k, v in offenders.items() if v} == {}
 

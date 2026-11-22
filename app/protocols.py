@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from app.core.tenancy import TenantContext
 
@@ -221,3 +221,118 @@ class LLMClient(Protocol):
     ) -> LLMResult: ...
 
     async def available_models(self) -> list[str]: ...
+
+
+# ---------------------------------------------------------------- retrieval (rev 5 contract)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalQuery:
+    """What the ask pipeline hands to the retriever: one or more query variants (original, English,
+    Urdu script) and the filters. Variants are searched in parallel and fused with RRF (§4)."""
+
+    variants: tuple[str, ...]
+    filters: SearchFilters = SearchFilters()
+    candidates_k: int = 20
+    context_k: int = 5
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    point: ScoredPoint
+    rank: int  # 1-based, after fusion + rerank
+    rerank_score: float | None = None  # sigmoid of the cross-encoder logit, in [0, 1]
+    used_in_context: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalResult:
+    candidates: tuple[Candidate, ...]  # everything fetched (shown in the chunks panel)
+    context: tuple[Candidate, ...]  # the subset passed to the LLM
+    max_rerank: float | None
+    latency_ms: dict[str, int] = field(default_factory=dict)
+
+
+@runtime_checkable
+class Retriever(Protocol):
+    async def retrieve(self, ctx: TenantContext, query: RetrievalQuery) -> RetrievalResult: ...
+
+
+# ---------------------------------------------------------------- services used by the routers
+
+
+@dataclass(frozen=True, slots=True)
+class UploadedFile:
+    """An upload already spooled to disk by the router (streaming size check done there)."""
+
+    file_name: str
+    path: Path
+    size_bytes: int
+    content_type: str | None = None
+
+
+if TYPE_CHECKING:  # schemas import tenancy only; this keeps protocols importable from schemas-free code
+    from app.schemas import (
+        AskRequest,
+        AskResponse,
+        ChunkOut,
+        DocumentMetadata,
+        DocumentOut,
+        FeedbackOut,
+        FeedbackRequest,
+        Page,
+        SearchRequest,
+        SearchResponse,
+    )
+
+
+@runtime_checkable
+class DocumentService(Protocol):
+    """Implemented by app/ingestion/service.py. `accepted=True` means 202 (background ingestion)."""
+
+    async def upload(
+        self,
+        ctx: TenantContext,
+        file: UploadedFile,
+        *,
+        visibility: str,
+        metadata: DocumentMetadata,
+    ) -> tuple[DocumentOut, bool]: ...
+
+    async def list(
+        self,
+        ctx: TenantContext,
+        *,
+        agency: str | None,
+        jurisdiction: str | None,
+        topic: str | None,
+        language: str | None,
+        status: str | None,
+        limit: int,
+        cursor: str | None,
+    ) -> Page[DocumentOut]: ...
+
+    async def get(self, ctx: TenantContext, doc_id: str) -> DocumentOut: ...
+
+    async def patch(self, ctx: TenantContext, doc_id: str, metadata: DocumentMetadata) -> DocumentOut: ...
+
+    async def chunks(
+        self, ctx: TenantContext, doc_id: str, *, limit: int, cursor: str | None
+    ) -> Page[ChunkOut]: ...
+
+    async def replace(
+        self, ctx: TenantContext, doc_id: str, file: UploadedFile
+    ) -> tuple[DocumentOut, bool]: ...
+
+    async def delete(self, ctx: TenantContext, doc_id: str) -> None: ...
+
+
+@runtime_checkable
+class AskService(Protocol):
+    """Implemented by app/generation/service.py (LangGraph pipeline)."""
+
+    async def ask(self, ctx: TenantContext, request: AskRequest) -> AskResponse: ...
+
+    async def search(self, ctx: TenantContext, request: SearchRequest) -> SearchResponse: ...
+
+    async def feedback(self, ctx: TenantContext, request: FeedbackRequest) -> FeedbackOut: ...
