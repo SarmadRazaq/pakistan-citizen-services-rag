@@ -272,6 +272,8 @@ class RetrievedChunk(Base):
     jurisdiction: Jurisdiction | None = None
     effective_date: date | None = None
     page: int | None = None
+    page_end: int | None = None  # added rev 5 for exact eval relevance matching
+    section_path: list[str] = Field(default_factory=list)  # heading path (HTML/DOCX/MD)
     chunk_index: int
     language: LanguageCode | None = None
     is_table: bool = False

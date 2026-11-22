@@ -98,6 +98,8 @@ def retrieved_chunks(
                 jurisdiction=_enum_or_none(Jurisdiction, p.jurisdiction),
                 effective_date=p.effective_date,
                 page=p.page_start,
+                page_end=p.page_end,
+                section_path=list(p.section_path),
                 chunk_index=p.chunk_index,
                 language=_enum_or_none(LanguageCode, p.language),
                 is_table=p.is_table,
