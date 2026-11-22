@@ -1,0 +1,31 @@
+# Heavy ML stack for the local models (BGE-M3 embedder, bge-reranker-v2-m3; blueprint §3.4, §3.6, §12.9).
+# Kept out of requirements.txt so CI and the CPU image stay light. app/core/device.py and app/retrieval/*
+# import torch / FlagEmbedding lazily, so the base install works without this file.
+#
+# GPU (RTX 3050, CUDA): install the CUDA build of torch from the PyTorch index FIRST, then the rest.
+# cu128 is the current stable CUDA wheel line; cu126 also works on the 3050 (Ampere, sm_86). Check
+# https://pytorch.org/get-started/locally/ for the current index before installing.
+#
+#   UV_LINK_MODE=copy uv pip install --python .venv torch --index-url https://download.pytorch.org/whl/cu128
+#   UV_LINK_MODE=copy uv pip install --python .venv -r requirements-ml.in -c requirements.txt
+#
+# CPU only (deployment host without a GPU):
+#
+#   UV_LINK_MODE=copy uv pip install --python .venv torch --index-url https://download.pytorch.org/whl/cpu
+#   UV_LINK_MODE=copy uv pip install --python .venv -r requirements-ml.in -c requirements.txt
+#
+# Pinning: requirements-ml.txt is not committed yet, because resolving torch from the CUDA index pulls
+# multi-GB wheels. When the stack is installed on the dev machine, pin it with
+#
+#   uv pip compile requirements-ml.in -c requirements.txt -o requirements-ml.txt \
+#       --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
+#
+# Model weights (~2.3 GB BGE-M3 + ~2.3 GB reranker) download from the Hugging Face Hub on first use into
+# HF_HOME. Verify the whole stack with:
+#   RUN_LIVE_MODELS=1 .venv/Scripts/python -m pytest -m live tests/integration/test_retrieval_live.py
+
+torch>=2.5
+FlagEmbedding>=1.3
+transformers>=4.44
+sentencepiece
+accelerate
