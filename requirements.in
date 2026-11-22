@@ -1,0 +1,19 @@
+# Runtime dependencies (scaffold set). Pin with:
+#   uv pip compile --universal requirements.in -o requirements.txt
+# Work packages add their own libraries here (PyMuPDF, trafilatura, FlagEmbedding, torch, langgraph, ...)
+# and re-run the compile step, so requirements.txt always stays fully pinned.
+
+fastapi
+uvicorn[standard]
+pydantic[email]
+pydantic-settings
+python-multipart
+httpx
+structlog
+tenacity
+qdrant-client
+sqlalchemy[asyncio]
+aiosqlite
+pyjwt
+pwdlib[argon2]
+slowapi

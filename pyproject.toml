@@ -1,0 +1,58 @@
+[project]
+name = "rag-service"
+version = "0.1.0"
+description = "Multilingual (English, Urdu, Roman Urdu) RAG helpdesk for Pakistani citizen services and rights"
+requires-python = ">=3.12,<3.13"
+readme = "README.md"
+
+# Dependencies live in requirements.in (pinned into requirements.txt with `uv pip compile`).
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["app", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "S", "ASYNC", "RUF", "SIM", "PTH", "TID"]
+ignore = [
+  "S101",   # assert is fine in tests and for internal invariants
+  "RUF001", # Urdu text contains characters ruff flags as ambiguous
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+known-third-party = ["hypothesis"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Only app/retrieval/vector_store.py may talk to Qdrant directly (blueprint §5.8.2).
+# That file carries a per-line noqa; everything else must go through TenantScopedVectorStore.
+"qdrant_client".msg = "Import Qdrant only in app/retrieval/vector_store.py (tenant isolation, §5.8.2)."
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+files = ["app"]
+
+[[tool.mypy.overrides]]
+module = ["qdrant_client.*", "slowapi.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+markers = [
+  "live: needs real GPU models and a running AntSeed proxy (skipped in CI)",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py"]

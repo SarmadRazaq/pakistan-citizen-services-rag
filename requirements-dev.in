@@ -1,0 +1,10 @@
+# Development and test tools. Pin with:
+#   uv pip compile --universal requirements-dev.in -o requirements-dev.txt
+-c requirements.txt
+
+pytest
+pytest-asyncio
+pytest-cov
+hypothesis
+ruff
+mypy
