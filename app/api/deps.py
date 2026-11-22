@@ -59,11 +59,18 @@ async def get_tenant(request: Request) -> TenantContext:
     Contract: the auth work package replaces this body (JWT `ver` check, role read from the DB).
     Until then every protected route answers 401. Tests override this dependency.
     """
-    raise AppError(
-        ErrorCode.UNAUTHORIZED,
-        "Authentication is not implemented yet.",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    from app.core.context import get_request_id
+
+    auth = getattr(request.app.state, "auth", None)
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if auth is None or scheme.lower() != "bearer" or not token.strip():
+        raise AppError(
+            ErrorCode.UNAUTHORIZED,
+            "Sign in to continue." if auth is not None else "Authentication is not configured.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    ctx: TenantContext = await auth.resolve(token.strip(), request_id=get_request_id())
+    return ctx
 
 
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
