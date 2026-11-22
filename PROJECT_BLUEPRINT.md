@@ -1,6 +1,6 @@
 # Production Multilingual RAG Service: Project Blueprint
 
-> **Status:** design blueprint, revision 4, written before any code exists (22 Nov 2026). Rev 3 added multi-tenancy (§5.8) and edge cases E32–E43. **Rev 4 switches the domain from university admissions to citizen services and rights for the general public** (§3.1), adds the advice-boundary and dated-information guardrails (GO-9, GO-10) and edge cases E44–E45. A same-day source check verified every source (`corpus/SEED_SOURCES.md`) and added E46.
+> **Status:** design blueprint, revision 5, written before any code exists (22 Nov 2026). Rev 3 added multi-tenancy (§5.8) and edge cases E32–E43. **Rev 4 switches the domain from university admissions to citizen services and rights for the general public** (§3.1), adds the advice-boundary and dated-information guardrails (GO-9, GO-10) and edge cases E44–E45. A same-day source check verified every source (`corpus/SEED_SOURCES.md`) and added E46. **Rev 5 (22 Nov):** hosted LLMs move to the **NVIDIA API** (§3.7); the **MVP path is locked** (§16.1); private uploads get an explicit processing policy (§3.7); human prerequisites are tracked in `docs/HUMAN_TODO.md`.
 > **Deadline:** Wednesday 25 Nov 2026.
 > **Sources:** `Portfolio-01-Production-RAG-Service.pdf` (the brief) and `Portfolio-01-Grading-Rubric-RAG.xlsx` (the rubric: 100 mandatory marks plus 28 bonus marks; a 0 on M7, the evaluation criterion, is an automatic F).
 >
@@ -13,7 +13,7 @@
 |---|---|---|
 | Domain and audience | **Citizen services and rights helpdesk for the general public of Pakistan**: ID documents, passport, social protection, individual tax basics, rights and complaints (federal + Punjab and Sindh) | §3.1, §7.2 (GO-9, GO-10), §10.1 |
 | Corpus | **Official public documents from agency and government websites** | §3.1, §5.3 (`agency`, `jurisdiction`, `effective_date` metadata) |
-| LLM provider | **Open-weight models only**, called through the **AntSeed** peer-to-peer network (free sellers) via its local OpenAI-compatible proxy; local fallback via Ollama | §3.7, §3.8, §12 |
+| LLM provider | **Open-weight models only**, called through the **NVIDIA API catalog** (OpenAI-compatible, student's own key; rev 5 replaced AntSeed); local fallback via Ollama | §3.7, §3.8, §12 |
 | Languages | **English, Urdu (Nastaliq script), Roman Urdu** (Arabic dropped) | §4, §7, §10 |
 | Hardware | **NVIDIA RTX 3050, 6 GB VRAM** for embeddings, reranker, injection classifier and an optional small local LLM | §3.4, §12.7, §12.9 |
 | Answer model | Not fixed in advance. Start with a default; **the G1–G3 comparison in the evaluation picks the winner** | §3.7, §10.6 |
@@ -80,7 +80,7 @@ Each graded item maps to a part of this document, a code location and a moment i
 | B4 | Modern frontend (3) | Next.js + TypeScript + Tailwind + shadcn/ui | **P1**: built anyway |
 | B6 | Document guardrails (3) | §7.3: hidden-instruction detection, active-content and corrupt-file rejection | **P1** |
 | B3 | Monitoring (4) | §12.5: Langfuse traces, p50/p95, tokens, cost, error rate, provider used, dashboard page | **P2** |
-| B8 | Deployment (3) | §12.8: backend container with AntSeed sidecar + Qdrant + Vercel frontend | **P2**: last |
+| B8 | Deployment (3) | §12.8: backend container + Qdrant + Vercel frontend; LLMs via the NVIDIA API | **P2**: last |
 
 ---
 
@@ -106,7 +106,7 @@ flowchart LR
     PG[Prompt Guard 2 86M]
   end
   subgraph LLMs[LLM endpoints · OpenAI-compatible]
-    AS[AntSeed buyer proxy<br/>127.0.0.1:8377/v1<br/>P2P open-weight models]
+    AS[NVIDIA API catalog<br/>integrate.api.nvidia.com/v1<br/>hosted open-weight models]
     OL[Ollama 127.0.0.1:11434/v1<br/>small local fallback]
   end
   subgraph Stores
@@ -149,7 +149,7 @@ rag-service/
 │   ├── core/
 │   │   ├── errors.py           # ErrorCode registry + AppError → RFC 9457 problem+json handlers
 │   │   ├── context.py          # request-id contextvar
-│   │   ├── health.py           # readiness probes (Qdrant, AntSeed /v1/models, Ollama; more added per WP)
+│   │   ├── health.py           # readiness probes (Qdrant, NVIDIA /v1/models with key, Ollama; more added per WP)
 │   │   ├── logging.py          # structlog JSON, request-id contextvar, secret redaction
 │   │   ├── middleware.py       # request id, timing, access log
 │   │   ├── security.py         # argon2 hashing, JWT encode/decode, token_version check
@@ -198,7 +198,7 @@ rag-service/
 ├── notebooks/                  # 01..07, executed, with outputs committed
 ├── tests/  unit/ integration/ api/ e2e/  conftest.py  fixtures/files/
 ├── scripts/                    # collect_corpus.py, seed_corpus.py (→ u_public), create_admin.py, export_openapi.py, reindex.py
-├── docker/  Dockerfile  Dockerfile.gpu  docker-compose.yml   # api + antseed + qdrant + postgres (+ ollama, langfuse)
+├── docker/  Dockerfile  Dockerfile.gpu  docker-compose.yml   # api + qdrant (+ ollama, langfuse)
 ├── .github/workflows/ci.yml
 ├── requirements.txt (pinned)  requirements-dev.txt  .env.example  .gitignore  Makefile
 ├── README.md  DESIGN.md  EVAL.md  AI_USAGE.md
@@ -322,42 +322,46 @@ Each decision uses the brief's required format: **choice · why · rejected alte
 
 **Rejected:** dense-only retrieval (misses exact codes and amounts; it is the baseline config); weighted linear fusion (needs per-corpus tuning); proprietary rerank APIs (violate the open-source decision).
 
-### 3.7 LLM: open-weight models through AntSeed
+### 3.7 LLM: open-weight models through the NVIDIA API catalog (rev 5)
 
-**How models are reached.** AntSeed is a peer-to-peer marketplace. Independent sellers serve open-weight models, and a **local buyer proxy** (`@antseed/cli`, command `antseed buyer start`) exposes an **OpenAI-compatible API at `http://127.0.0.1:8377/v1`** (`/v1/chat/completions`, `/v1/models`).
-- The proxy needs no API key; any placeholder works.
-- **Free sellers need no deposit.** Paid sellers would need a USDC deposit; that is out of scope and **not used**.
-- A bare model name gets automatic routing and failover across sellers. `<peerId>@<model>` **pins** one seller.
+> **Rev 5 change (22 Nov):** the student will use **NVIDIA API keys**, so hosted generation moves from the AntSeed peer-to-peer network to the **NVIDIA API catalog** (build.nvidia.com). Everything else in the design (OpenAI-compatible client, model chain, Ollama fallback, eval comparison) stays the same. Older mentions of AntSeed elsewhere in this document are superseded by this section.
 
-The service talks to it through **LangChain's `ChatOpenAI`** with `base_url` set. The same client then works for Ollama (`http://127.0.0.1:11434/v1`), RAGAS and LangGraph, and swapping models is a config change.
+**How models are reached.** NVIDIA hosts open-weight models behind an **OpenAI-compatible API** at `https://integrate.api.nvidia.com/v1` (`/chat/completions`, `/models`).
+- **Auth:** the key is sent as `Authorization: Bearer nvapi-…`. It lives in `.env` as `NVIDIA_API_KEY`, is typed `SecretStr`, and is redacted from logs. It is never in code or git.
+- **Client:** the service talks to it through **LangChain's `ChatOpenAI`** with `base_url` set. The same client works for the Ollama fallback (`http://127.0.0.1:11434/v1`), RAGAS and LangGraph, so swapping a model is a config change.
+- **Model ids are verified, not assumed.** `scripts/check_models.py` lists `GET /v1/models` for the key, flags any configured id that is missing, and with `--probe` sends one JSON-mode request per model. The result is saved to `evals/configs/models_available.json`, so the eval records which models existed on the day it ran.
 
 | Role | Default (hypothesis) | Challengers in the eval | Why |
 |---|---|---|---|
-| **Answer generation** | **DeepSeek V4.1 Flash** | **Qwen3-235B-A22B-Instruct-2507**, **Gemma 4 31B Instruct** | DeepSeek V4.1 Flash has the most free sellers in the user's list, so it has the best availability and the fewest 503s during a live demo. Qwen3-235B is the strongest documented multilingual candidate (its model card lists Urdu among 119 languages). Gemma 4 31B is the smallest serious candidate. **Urdu and Roman Urdu answer quality is unknown until measured. G1–G3 (§10.6) decide**, and DESIGN.md reports the winner with numbers. |
-| Query understanding (language, Roman Urdu transliteration, translation, decomposition, agency, province, advice request, off-topic, injection flag) | same model as the generator | Mistral Small 3.2 24B | One JSON call replaces five steps; a "Flash" model keeps it fast |
+| **Answer generation** | `deepseek-ai/deepseek-v3.1` | `qwen/qwen3-235b-a22b`, `meta/llama-3.3-70b-instruct` | A strong open-weight MoE generalist. Qwen3-235B is the strongest documented multilingual candidate (Urdu is in its language list). Llama 3.3 70B is a dense baseline with wide availability. **Urdu and Roman Urdu quality is unknown until measured: G1–G3 (§10.6) decide**, and DESIGN.md reports the winner with numbers. The ids are checked with `check_models.py` before use. |
+| Query understanding (language, Roman Urdu transliteration, translation, decomposition, agency, province, advice request, off-topic, injection flag) | `meta/llama-3.3-70b-instruct` | the generator | One JSON call replaces five steps; a fast non-reasoning model keeps latency down |
 | Groundedness check (optional output guard) | same as generator | — | Sentence-level "supported?" verdicts |
-| **LLM-as-a-judge** (eval only) | **GPT-OSS-120B** | Qwen3-235B as a second judge on a sample | Open-weight reasoning model (Apache 2.0) from a **different model family than the generator**, which reduces self-preference bias. Reliability is checked against human labels (§10.5). |
-| **Local fallback** | **Qwen2.5-3B-Instruct (Q4) via Ollama** on the 3050 | — | Keeps the service answering, at lower quality, if AntSeed routing fails. Responses are clearly marked `degraded=true`. |
+| **LLM-as-a-judge** (eval only) | `openai/gpt-oss-120b` | Qwen3-235B as a second judge on a sample | An open-weight reasoning model (Apache 2.0) from a **different family than the generator**, which reduces self-preference bias. Reliability is checked against human labels (§10.5). |
+| **Local fallback** | **Qwen2.5-3B-Instruct (Q4) via Ollama** on the 3050 | — | Keeps the service answering, at lower quality, when the NVIDIA API is unreachable or rate-limited. Responses are marked `degraded=true`. |
 
-Excluded from the user's list: **GPT-5.6 Luna** (not open-weight, so it conflicts with the decision); image/video models.
+**Reliability design (feedback item 2).**
+- **Fallback chain:** `LLMRouter` tries the configured models in order, then Ollama. Each attempt has its own timeout, and each model has a **circuit breaker**.
+- **Rate limit:** a client-side limiter (`LLM_MAX_RPM=35`) keeps requests under the free-tier limit of about 40 per minute, so the eval run cannot trip it.
+- **Retries:** 429 and 5xx responses are retried with backoff and `Retry-After`. A 4xx caused by the request itself is never retried.
+- **JSON:** the router sends `response_format={"type":"json_object"}` (`LLM_JSON_MODE=true`) and falls back to plain prompting if a model rejects it. The design **still does not depend on JSON mode**: a tolerant parser, Pydantic validation and one repair retry stay in place (§3.8).
+- **Eval response cache:** every eval LLM call is cached on disk, keyed by `(model, prompt_hash, params)`, in `evals/.cache/llm/`. A bad network day therefore cannot block the M7 gate, and published numbers re-run offline. The cache is **never used on the serving path** (§5.8.5).
+- **Recording:** each response and Langfuse trace records which endpoint and model answered.
 
-**Reliability design.** Free P2P sellers vary in health and latency: the AntSeed stats show reputation scores from about 5 to 95 and a "gated" state below 60. So:
-- `LLMRouter` tries the configured model chain in order (`deepseek-v4-1-flash → qwen3-235b-a22b-instruct-2507 → gemma-4-31b-it → ollama:qwen2.5:3b`), with a **per-attempt timeout** and a **per-model circuit breaker**.
-- It records **which endpoint, model and seller answered** in the response and in the Langfuse trace. The real model IDs come from `GET /v1/models` at startup, so names are never hard-coded.
-- **The eval pins sellers** (`<peerId>@model`). Measured numbers are then reproducible, and model quality is not confused with routing noise.
+**Data privacy (an explicit trade-off, feedback item 5).** Prompts sent to the NVIDIA API are processed by NVIDIA under its API terms. Prompts no longer go to anonymous peer-to-peer sellers.
+- **The official corpus** is public government material, so sending it is acceptable.
+- **Private uploads** follow `PRIVATE_CONTEXT_POLICY`:
+  - `hosted_with_notice` (default): answers that use private chunks are generated by the NVIDIA API, and the response carries a `third_party_processing` notice. The upload screen says so before the file is sent.
+  - `local_only`: any answer whose context contains a private chunk is generated by the local Ollama model. Nothing private leaves the machine; quality is lower, and the answer is marked `degraded`.
+- DESIGN.md states this plainly.
 
-**Data privacy (an explicit trade-off).** By default an AntSeed seller **can read the prompt**. Only sellers verified to run in a TEE (an Intel TDX secure enclave) hide it, and even that check does not cover everything downstream. For this corpus that is acceptable, because every document is **public government material**. For private user uploads the config offers:
-- `LLM_PRIVACY_MODE=public` (default): any seller.
-- `tee_required`: the proxy's `--require-verifier` flag, so only TEE-verified sellers are used.
-- `local_only`: Ollama only; nothing leaves the machine.
-
-DESIGN.md states this plainly.
-
-**Cost.** **$0 actual** on free sellers. Tokens are still tracked per request. To keep the B3 "cost per question" metric meaningful, the service also reports a **list-price equivalent** (tokens × the cheapest paid AntSeed price for the same model, from a config price table), labelled as such.
+**Cost.** The free tier is credit- and rate-limited. Tokens are tracked per request. The B3 "cost per question" metric reports actual cost ($0 on free credits) and a **list-price equivalent** from a config price table, labelled as such.
 
 **Context window:** not a constraint. Prompts are about 3–5k tokens.
 
-**Rejected:** Claude / GPT / Gemini APIs (not open-source, against the decision); **self-hosting a strong model on the 3050** (6 GB VRAM fits only ≤ 7B quantized models, whose Urdu quality is poor, and the VRAM is needed for embeddings and the reranker). The local 3B model is a fallback only.
+**Rejected:**
+- **Claude / GPT / Gemini APIs:** not open-weight, which is against the decision.
+- **AntSeed P2P (revs 1–4):** sellers come and go, the model ids couldn't be verified, and sellers can read prompts.
+- **Self-hosting a strong model on the 3050:** 6 GB of VRAM fits only quantized models of 7B or less, whose Urdu is poor, and the VRAM is needed for embeddings and the reranker.
 
 ### 3.8 Prompt design and citations
 
@@ -372,7 +376,7 @@ Without vendor-native citations, citation correctness is **enforced in code**:
     "answer": "… [S3] … [S1]",
     "citations": [{"source": "S3", "quote": "exact words copied from S3"}]}
    ```
-   AntSeed does not document JSON mode or structured-output pass-through, so the design **does not depend on it**. The prompt asks for JSON, the parser is tolerant (extracts the first JSON object), Pydantic validates it, and an invalid reply gets **one repair retry** before a safe refusal.
+   JSON mode (`response_format`) is requested where a model accepts it, but the design **does not depend on it**. The prompt asks for JSON, the parser is tolerant (extracts the first JSON object), Pydantic validates it, and an invalid reply gets **one repair retry** before a safe refusal.
 3. **Quote verification.** Every citation's `source` must be one of the provided ids. Its `quote` must appear in that chunk (normalized fuzzy match, `rapidfuzz.partial_ratio ≥ 90`). Every `[Sn]` marker in the answer must have a matching citation. Invented sources and invented quotes are therefore **caught mechanically**, not left to the model. Quotes stay in the **source language**, even when the answer is in Urdu.
 4. **Grounding rule.** "Use only the sources. General knowledge may only *explain or connect* stated facts, never add new facts." The brief allows mixing in general knowledge; this rule keeps it from turning into invention.
 5. **Refusal protocol.** `answerable: false` with an empty answer when the sources lack the answer. Code maps it to a localized message. For multi-part questions, unsupported parts are listed in `"unanswered_parts"`.
@@ -633,7 +637,7 @@ flowchart TD
   E --> F[rerank · GPU]
   F --> G{relevance_gate<br/>max rerank ≥ τ_refuse?}
   G -->|no| Z4[respond_unanswerable 200]
-  G --> H[generate<br/>LLMRouter: AntSeed chain → Ollama fallback<br/>JSON answer with S-markers + quotes]
+  G --> H[generate<br/>LLMRouter: NVIDIA model chain → Ollama fallback<br/>JSON answer with S-markers + quotes]
   H --> I[guard_output<br/>JSON valid · quotes verified · leak · secrets · language · groundedness]
   I -->|fail, retries left| H
   I -->|fail, no retries| Z5[respond_safe_refusal 200]
@@ -736,7 +740,7 @@ Thresholds θ are tuned on the adversarial set (§10.3) to keep **false positive
 | POST | `/ask/stream` | SSE variant (stretch) | 200 | same |
 | POST | `/feedback` | 👍/👎 on one of **your own** answers → Langfuse score | 201 | 404, 422 |
 | GET | `/metrics/summary` | p50/p95 latency, tokens, cost, error rate; **own numbers for users, global numbers + provider mix for admins** | 200 | 401 |
-| GET | `/health/live` · `/health/ready` | liveness · readiness (DB, Qdrant, GPU models loaded, **AntSeed proxy reachable + model list**, Ollama) | 200 | 503 |
+| GET | `/health/live` · `/health/ready` | liveness · readiness (DB, Qdrant, GPU models loaded, **NVIDIA API key valid + model list**, Ollama) | 200 | 503 |
 
 ### 8.3 Error envelope (RFC 9457 `application/problem+json`)
 
@@ -789,7 +793,7 @@ Response (abridged):
     ]
   },
   "guardrails": { "input": "passed", "output": "passed", "flags": [] },
-  "provider": { "endpoint": "antseed", "model": "deepseek-v4-1-flash", "seller": "0x1d90…", "attempts": 1 },
+  "provider": { "endpoint": "nvidia", "model": "deepseek-ai/deepseek-v3.1", "seller": null, "attempts": 1 },
   "usage": { "input_tokens": 3920, "output_tokens": 210, "cost_usd": 0.0, "list_price_equivalent_usd": 0.0011 },
   "latency_ms": { "total": 5310, "understand": 1180, "retrieve": 60, "rerank": 140, "generate": 3720, "guard_output": 90 }
 }
@@ -819,7 +823,7 @@ Every row has an automated test and is shown in the demo. † marks cases the br
 | E12 † | Special characters (Rs., PKR, %, emoji, Urdu digits ۲۰۲۵, CNIC-style `#####-#######-#` patterns in questions) | NFKC + digit normalization | handled | `test_special_chars_urdu_digits` |
 | E13 † | Non-English text in files (Urdu Nastaliq) | detection, Urdu normalization, multilingual embedding | cross-lingual answers | multilingual subset |
 | E14 † | LLM timeout / rate limit / seller offline | per-attempt timeout → next model in the chain → Ollama fallback (`degraded=true`) → 503 | 200 (degraded) / 503 | `test_llm_fallback_chain` (fake endpoints) |
-| E15 † | AntSeed proxy not running / Qdrant down | readiness flips; clear errors | 503 | `test_proxy_down_503`, `test_qdrant_down_503` |
+| E15 † | NVIDIA API unreachable / key missing or invalid / Qdrant down | readiness flips; clear errors | 503 | `test_llm_down_503`, `test_qdrant_down_503` |
 | E16 † | Concurrent uploads of the same file | DB unique constraint | exactly one 201 | `test_concurrent_duplicate_uploads` |
 | E17 † | Many concurrent questions | async I/O, GPU worker queue, semaphores, rate limiter | all complete or 429; no GPU OOM | `test_concurrent_asks` |
 | E18 | Unsupported type / renamed `.exe` | magic-byte mismatch | 415 | `test_spoofed_extension` |
@@ -922,7 +926,7 @@ Every row has an automated test and is shown in the demo. † marks cases the br
 | Framework | Role | Why |
 |---|---|---|
 | **Own deterministic metrics** (`evals/metrics.py`) | Hit@k, Recall@k, MRR, nDCG, citation validity, refusal accuracy, language accuracy | transparent, free, instant, no LLM variance; the full retrieval grid runs at zero cost |
-| **RAGAS** | faithfulness, factual correctness, context precision | de-facto standard, comparable with published work. Configured with the **open-weight judge via `ChatOpenAI(base_url=AntSeed)`** through RAGAS's LangChain wrapper |
+| **RAGAS** | faithfulness, factual correctness, context precision | de-facto standard, comparable with published work. Configured with the **open-weight judge via `ChatOpenAI(base_url=NVIDIA)`** through RAGAS's LangChain wrapper |
 | **Custom LLM-as-a-judge** (`evals/judge.py`) | correctness 0–2, citation support, refusal appropriateness, language match, per-province handling, advice boundary (disclaimer present, no personal directive), date stated | RAGAS does not score refusals, citation support, Roman Urdu output, province confusion or the advice boundary; a rubric judge covers this project's specific promises |
 | **Langfuse** (Cloud free tier or self-hosted Docker) | datasets, an experiment run per config, traces linked to scores, latency, provider used | one place to see *why* a question failed (open its trace); doubles as production monitoring (B3) |
 
@@ -962,7 +966,7 @@ The retrieval grid is cheap: no LLM calls apart from query understanding on mult
 
 - `make eval` → `python -m evals.run --configs evals/configs/*.yaml --split test`.
 - The corpus is ingested into an **isolated collection per config** (`eval__R3__<hash>`), so user data is never touched. Questions run with bounded concurrency. Output goes to `evals/results/<timestamp>/{metrics.json, per_question.csv, report.md}`, runs are pushed to Langfuse, and the tables in `EVAL.md` are regenerated between `<!-- AUTOGEN -->` markers.
-- **Pinned:** AntSeed **sellers** (`<peerId>@model`), model ids, prompt version, seeds, packages, and the corpus manifest with per-file SHA-256.
+- **Pinned:** model ids (with the `check_models.py` snapshot of `/v1/models`), prompt version, seeds, packages, and the corpus manifest with per-file SHA-256.
 - An LLM response cache keyed by `(endpoint, model, prompt_hash)` makes re-runs fast and free. It is **eval-only** (`RESPONSE_CACHE=eval_only`) and never sits on the serving path, so it cannot leak answers across tenants (§5.8.5); `--no-cache` forces fresh calls. P2P sellers can disappear between runs, so the cache is what keeps the **published numbers reproducible**.
 - `EVAL.md` ends with a **failure analysis**. Each failed test question is categorized (retrieval miss / ranking / province or agency confusion / stale source / advice boundary / refusal error / hallucination / citation / language / OCR / table extraction), with its root cause and the fix applied or the reason it was not fixed.
 
@@ -980,7 +984,7 @@ Approach, justified in DESIGN.md: **notebooks to understand and verify each stag
 | `02_chunking.ipynb` | token-size distributions per strategy, boundaries, table chunks, Urdu sentence splitting (`۔`) |
 | `03_embedding_indexing.ipynb` | BGE-M3 dense + sparse on GPU, **VRAM usage**, throughput, cross-lingual similarity checks (en↔ur↔roman-ur pairs), Qdrant upsert, payloads |
 | `04_retrieval.ipynb` | dense vs sparse vs hybrid vs reranked rankings with scores; province/agency filter and freshness rule |
-| `05_generation_guardrails.ipynb` | AntSeed `/v1/models`, JSON answers, quote verification catching a forged quote, refusals, injection blocks, canary test, fallback chain |
+| `05_generation_guardrails.ipynb` | NVIDIA `/v1/models`, JSON answers, quote verification catching a forged quote, refusals, injection blocks, canary test, fallback chain |
 | `06_multilingual.ipynb` | Urdu, Roman Urdu and code-switched questions end to end; answer-language checks |
 | `07_eval_exploration.ipynb` | results loading, config comparison plots, failure drill-down |
 
@@ -993,7 +997,7 @@ Approach, justified in DESIGN.md: **notebooks to understand and verify each stag
 | **API** | every endpoint: success **and** each documented error status | fakes via dependency overrides | status matrix 201/202/204/400/401/403/404/409/413/415/422/429/503 |
 | **Concurrency** | races, GPU queue | fakes | 10 parallel identical uploads → exactly one 201 |
 | **Tenancy** | §5.8.9: generated access matrix, canary leak sweep, `hypothesis` interleavings, missing-filter guard | fakes + Qdrant `:memory:` | B's canary phrase never reaches A in any response, log or trace |
-| **E2E live** (`@pytest.mark.live`) | real GPU models + AntSeed on 5 golden questions | none | pre-demo smoke check |
+| **E2E live** (`@pytest.mark.live`) | real GPU models + NVIDIA API on 5 golden questions | none | pre-demo smoke check |
 
 Targets: ≥ 80% line coverage on `app/` (wiring excluded). `--junitxml` + coverage HTML are saved for screenshots. CI (GitHub Actions, CPU-only, no live tests) runs `ruff`, `mypy --strict app/` and pytest on every push and PR.
 
@@ -1008,7 +1012,8 @@ All tunables live here and can be overridden by environment variables. Secrets a
 ```
 APP_ENV, LOG_LEVEL, CORS_ORIGINS, DEVICE=auto            # auto → cuda if available, else cpu
 # LLM endpoints (OpenAI-compatible)
-ANTSEED_BASE_URL=http://127.0.0.1:8377/v1, ANTSEED_API_KEY=antseed (placeholder)
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1, NVIDIA_API_KEY (SecretStr, required), LLM_MAX_RPM=35, LLM_JSON_MODE=true
+PRIVATE_CONTEXT_POLICY=hosted_with_notice   # hosted_with_notice | local_only
 OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
 GENERATION_MODELS=deepseek-v4-1-flash,qwen3-235b-a22b-instruct-2507,gemma-4-31b-it   # verify ids via /v1/models
 HELPER_MODEL=deepseek-v4-1-flash, JUDGE_MODEL=gpt-oss-120b, LOCAL_FALLBACK_MODEL=qwen2.5:3b-instruct
@@ -1034,7 +1039,7 @@ RESPONSE_CACHE=eval_only, LANGFUSE_MASK_PRIVATE_TEXT=true
 # Citizen-services domain (§3.1, GO-9..11)
 REFERRALS_FILE=app/guardrails/referrals.yaml, STALE_AFTER_MONTHS=12, ADVICE_GUARD=true, EMERGENCY_GUARD=true
 JURISDICTIONS=federal,punjab,sindh,kp      # kp: only the Sehat Card Plus coverage page
-TEXT_QUALITY_MIN_SCRIPT_RATIO=0.6, TEXT_QUALITY_MIN_DICT_HIT=0.3   # E46: below → OCR the page
+TEXT_QUALITY_MIN_SCRIPT_RATIO=0.6, TEXT_QUALITY_MIN_DICT_HIT=0.15   # E46: below → OCR the page
 # Auth / observability
 JWT_SECRET (SecretStr), JWT_TTL_MIN=30
 LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY (SecretStr), LANGFUSE_HOST
@@ -1045,9 +1050,9 @@ GUARD_GROUNDEDNESS_CHECK=true, QUARANTINE_FLAGGED_CHUNKS=false, OCR_ENABLED=true
 
 | Dependency | Timeout | Retries | On exhaustion |
 |---|---|---|---|
-| AntSeed models (generation) | 45 s per attempt; whole chain capped at 90 s | no retry on the same model: **fail over to the next model** in `GENERATION_MODELS`; per-model circuit breaker (opens after 3 failures in 60 s, stays open 60 s) | Ollama fallback (`degraded=true`) → **503** `llm_unavailable` + `Retry-After` |
-| AntSeed helper call | 20 s | fails over to the next model | skip translation/decomposition and retrieve with the original query only (degraded but still answers) |
-| AntSeed proxy itself | 2 s connect | 1 | readiness = not ready; ask → fallback chain |
+| NVIDIA models (generation) | 45 s per attempt; whole chain capped at 90 s | no retry on the same model: **fail over to the next model** in `GENERATION_MODELS`; per-model circuit breaker (opens after 3 failures in 60 s, stays open 60 s) | Ollama fallback (`degraded=true`) → **503** `llm_unavailable` + `Retry-After` |
+| NVIDIA helper call | 20 s | fails over to the next model | skip translation/decomposition and retrieve with the original query only (degraded but still answers) |
+| NVIDIA API itself | 5 s connect; 429 honours `Retry-After` | 2 with backoff (429/5xx only) | readiness = not ready; ask → fallback chain |
 | Qdrant | 5 s | 3 × exponential backoff + jitter (tenacity) | **503** `vector_db_unavailable` |
 | Postgres | 5 s statement | pool pre-ping, 2 retries | **503** |
 | GPU models | 60 s per batch (worker future timeout); CUDA OOM → halve batch and retry, then CPU | — | **503** `embedding_unavailable` |
@@ -1080,7 +1085,7 @@ GUARD_GROUNDEDNESS_CHECK=true, QUARANTINE_FLAGGED_CHUNKS=false, OCR_ENABLED=true
   - a final ownership assertion on every returned point.
 
   Another user's private resource → 404; a public resource written by a non-admin → 403. Quotas and GPU fairness are in §5.8.6.
-- CORS allow-list. The **AntSeed proxy stays bound to 127.0.0.1**, as designed upstream, and is never exposed publicly. Security headers are set.
+- CORS allow-list. The **NVIDIA API key** stays server-side (never sent to the browser, never logged). Security headers are set.
 
 ### 12.7 Performance budget (targets, to be measured)
 
@@ -1101,13 +1106,13 @@ Remote LLM latency dominates and varies by seller. EVAL.md therefore reports p95
 
 | Component | Target | Notes |
 |---|---|---|
-| Backend | Docker image (python 3.12-slim + tesseract `eng/urd` + model weights) **with the AntSeed buyer proxy as a sidecar process** (Node, `@antseed/cli`) on the same host, talking over 127.0.0.1. Host: a CPU instance with **≥ 8 GB RAM** (e.g. Hugging Face Spaces Docker CPU tier or a small VM) | GPU acceleration is local-only; the deployed host runs CPU and is slower (documented). 512 MB free tiers are too small. |
+| Backend | Docker image (python 3.12-slim + tesseract `eng/urd` + model weights) (LLM calls go to the NVIDIA API, so no sidecar is needed) on the same host, talking over 127.0.0.1. Host: a CPU instance with **≥ 8 GB RAM** (e.g. Hugging Face Spaces Docker CPU tier or a small VM) | GPU acceleration is local-only; the deployed host runs CPU and is slower (documented). 512 MB free tiers are too small. |
 | Vector DB | Qdrant Cloud free cluster **or** Qdrant inside the same VM | account still to be decided |
 | Metadata DB | managed Postgres free tier **or** SQLite on a persistent volume | SQLite is enough for a demo deployment |
 | Frontend | Vercel (`NEXT_PUBLIC_API_URL`) **or** served statically by the backend | |
 | Observability | Langfuse Cloud free tier **or** self-hosted (docker-compose profile) | |
 
-Locally, `docker compose up` brings up api (with GPU via `Dockerfile.gpu` + NVIDIA Container Toolkit), antseed, qdrant, postgres, frontend, and optional ollama and langfuse profiles. **Free-tier limits change often: verify them on deployment day.** The public URL goes in the README.
+Locally, `docker compose up` brings up api (with GPU via `Dockerfile.gpu` + NVIDIA Container Toolkit), qdrant, postgres, frontend, and optional ollama and langfuse profiles. **Free-tier limits change often: verify them on deployment day.** The public URL goes in the README.
 
 ### 12.9 GPU memory budget (RTX 3050, 6 GB)
 
@@ -1119,7 +1124,7 @@ Locally, `docker compose up` brings up api (with GPU via `Dockerfile.gpu` + NVID
 | Activations (embed batch 32 × 512 tokens, rerank 20 pairs) | ~1.0–1.5 GB |
 | CUDA context / fragmentation | ~0.5 GB |
 | **Subtotal** | **~4–4.5 GB** |
-| Ollama Qwen2.5-3B Q4 (local fallback) | ~2.2 GB: **does not fit alongside**, so the fallback runs with partial CPU offload, or is loaded only when AntSeed fails (Ollama loads on demand) |
+| Ollama Qwen2.5-3B Q4 (local fallback) | ~2.2 GB: **does not fit alongside**, so the fallback runs with partial CPU offload, or is loaded only when the NVIDIA API fails (Ollama loads on demand) |
 
 All figures are estimates, measured in notebook 03 with `torch.cuda.max_memory_allocated()`. The ingestion batch size adapts on OOM (§12.2).
 
@@ -1154,7 +1159,7 @@ Accessibility: keyboard navigation, visible focus, AA contrast, `aria-live` for 
 
 ### 14.2 Secrets
 
-`.env` is gitignored from the first commit, and `.env.example` documents every variable. A `gitleaks` pre-commit hook plus a CI step guard against leaks. AntSeed's local proxy needs no key. If a wallet is ever configured for paid sellers, its key lives **outside the repo**; GO-5 and gitleaks both include patterns for `0x`-prefixed private keys.
+`.env` is gitignored from the first commit, and `.env.example` documents every variable. A `gitleaks` pre-commit hook plus a CI step guard against leaks. The NVIDIA key lives only in `.env`; GO-5 and gitleaks include an `nvapi-` pattern. 
 
 ### 14.3 Submission checklist
 
@@ -1162,11 +1167,11 @@ Accessibility: keyboard navigation, visible focus, AA contrast, `aria-live` for 
 - [ ] Source with the clean structure (§2.3)
 - [ ] Executed notebooks 01–07
 - [ ] `requirements.txt` pinned (`pip-compile`) + `.env.example`
-- [ ] `README.md`: setup (incl. `antseed buyer start`, GPU/CPU notes), config, run service, tests, eval, corpus collection, deployment URL
+- [ ] `README.md`: setup (incl. `NVIDIA_API_KEY` and `scripts/check_models.py`, GPU/CPU notes), config, run service, tests, eval, corpus collection, deployment URL
 - [ ] `DESIGN.md`: architecture + every §3 decision with **measured** evidence
 - [ ] `EVAL.md`: golden set, metrics, config + generator comparison, judge calibration, multilingual results, failure analysis
 - [ ] Swagger screenshots (successful calls + error cases) in `docs/screenshots/`
-- [ ] `AI_USAGE.md`: tools and models used (incl. this Claude Code session for design and build, plus the AntSeed open-weight models in the product), complete prompt list, exported chat history, configuration
+- [ ] `AI_USAGE.md`: tools and models used (incl. this Claude Code session for design and build, plus the NVIDIA-hosted open-weight models in the product), complete prompt list, exported chat history, configuration
 - [ ] Demo video link
 
 ---
@@ -1192,33 +1197,59 @@ flowchart LR
 
 | WP | Branch | Owns | Inputs | Deliverables | Done when |
 |---|---|---|---|---|---|
-| **P0** | `feature/scaffold` (main session) | skeleton, `config.py`, `schemas.py`, `core/errors.py`, **`core/tenancy.py` (`TenantContext` contract)**, protocols (all taking `TenantContext`), compose, CI (incl. the `qdrant_client` import grep), Makefile, `.env.example`, Next.js skeleton | this blueprint | compiling skeleton, frozen contracts | `pytest` runs; `docker compose up qdrant` works; `antseed buyer start` + `/v1/models` reachable |
+| **P0** | `feature/scaffold` (main session) | skeleton, `config.py`, `schemas.py`, `core/errors.py`, **`core/tenancy.py` (`TenantContext` contract)**, protocols (all taking `TenantContext`), compose, CI (incl. the `qdrant_client` import grep), Makefile, `.env.example`, Next.js skeleton | this blueprint | compiling skeleton, frozen contracts | `pytest` runs; `docker compose up qdrant` works; `scripts/check_models.py` reaches NVIDIA `/v1/models` (needs the student's key) |
 | **A0** | `feature/corpus` | `scripts/collect_corpus.py`, `corpus/manifest.csv`, `corpus/adversarial/` | **`corpus/SEED_SOURCES.md` approved by the student (decisions D1–D5)** | polite downloader for `script` rows, a checklist for the student's `manual` rows, manifest with hashes (agency, jurisdiction, effective date, `derived`/`authored` flags), the `test` rows copied into `corpus/adversarial/`, draft `referrals.yaml` from official contact pages (e.g. Mohtasib 1055, MoHR 1099) | every `core`/`pair` row collected or explicitly dropped; ≥ 4 Urdu documents with a **passing text-quality check**; all file types present |
 | **A1** | `feature/ingestion` | `app/ingestion/**`, document repo, ingestion tests, notebooks 01–02 | contracts, corpus | extractors (PDF/HTML/DOCX/PPTX/TXT/MD + OCR, **JPG/PNG last**, D4), text-quality check (E46), cleaning, chunking, doc guards GD-1..10 incl. GD-1b/1c, manual-file registration (`--register-manual`), dedupe (incl. against the public corpus), **diff upsert**, delete, reconciler, per-user quotas, account-deletion cascade | tests for E1–E6, E18–E22, E26–E29, E34, E36, E39, E41, E46 pass; text-quality check measured on the real Urdu PDFs in `SEED_SOURCES.md` |
 | **A2** | `feature/retrieval` | `app/retrieval/**`, `core/device.py`, notebooks 03–04 | contracts | GPU BGE-M3 embedder + owner-namespaced cache, **`TenantScopedVectorStore`** (named vectors, `is_tenant` index, alias, `MissingTenantFilter`), hybrid query, RRF, dedupe (incl. cross-scope `chunk_hash`), province/agency filter, freshness rule, GPU reranker, score assembly, **fair per-tenant GPU worker queue** | retrieval tests pass; `similarity` present for every candidate; VRAM measured; E40, E43 pass |
 | **A3** | `feature/guardrails` | `app/guardrails/**`, `ingestion/language.py`, `evals/adversarial_set.jsonl`, notebook 06 (part) | contracts | GI-1..9, GO-1..11 (incl. advice boundary, dated information, emergency), `referrals.yaml` loader, Prompt Guard 2 stack, canary, redaction, en/ur/roman-ur detection + Urdu normalization, localized messages | adversarial block rate and FP rate reported |
 | **A4** | `feature/frontend` | `frontend/**` | OpenAPI spec (typed mocks) | all §13 pages incl. chunks panel, RTL/Nastaliq, metrics page | works against mocks; Lighthouse a11y ≥ 90 |
-| **A5** | `feature/auth-observability` | `core/{security,logging,middleware,tracing,resilience}.py`, `generation/llm.py`, `api/{auth,health,metrics}.py` | contracts | JWT (`ver` revocation) + `get_tenant` dependency, roles + `create_admin.py`, SQL loader criteria, `DELETE /auth/me`, rate limiting (per user, login per IP + email), logging + redaction, Langfuse (HMAC user ids, private-text masking), role-scoped metrics summary, **LLMRouter** (AntSeed chain + Ollama + circuit breakers + `/v1/models` discovery) | auth, fallback-chain tests and the **§5.8.9 tenancy suite** pass (E30, E32, E33, E37, E38, E42) |
+| **A5** | `feature/auth-observability` | `core/{security,logging,middleware,tracing,resilience}.py`, `generation/llm.py`, `api/{auth,health,metrics}.py` | contracts | JWT (`ver` revocation) + `get_tenant` dependency, roles + `create_admin.py`, SQL loader criteria, `DELETE /auth/me`, rate limiting (per user, login per IP + email), logging + redaction, Langfuse (HMAC user ids, private-text masking), role-scoped metrics summary, **LLMRouter** (NVIDIA model chain + Ollama + circuit breakers + rate limiter + JSON mode + eval response cache) | auth, fallback-chain tests and the **§5.8.9 tenancy suite** pass (E30, E32, E33, E37, E38, E42) |
 | **A6** | `feature/ask-endpoint` | `generation/{prompts,query_understanding,answer,graph}.py`, `api/{ask,documents,search}.py`, API tests, notebook 05 | merged A0–A3, A5 | LangGraph pipeline, JSON answers + quote verification, refusals, routers, full status-matrix tests | every §8.2 status code covered by an API test |
 | **A7** | `feature/evals` | `evals/**`, notebook 07 | merged backend + **human-approved golden set** | metrics, RAGAS with the open-weight judge, judge calibration harness, config runner, seller pinning, response cache, Langfuse datasets, `make eval`, EVAL.md autogen | one command reproduces every table |
-| **A8** | `feature/hardening-deploy` | `tests/e2e`, concurrency tests, `docker/`, deploy config, README | merged system | E1–E46 suite, load smoke, Dockerfiles (CPU + GPU), AntSeed sidecar, deployment | public URL works end to end |
+| **A8** | `feature/hardening-deploy` | `tests/e2e`, concurrency tests, `docker/`, deploy config, README | merged system | E1–E46 suite, load smoke, Dockerfiles (CPU + GPU), deployment | public URL works end to end |
 | **Review** | read-only | — | full diff | correctness and security findings → fixed by the owning agent | no open high-severity findings |
 | **P4** | `docs/final` (main session) | `DESIGN.md`, `EVAL.md`, `AI_USAGE.md`, screenshots | eval results | final docs with real numbers | submission checklist complete |
 
-**Human checkpoints (these stay with the student, not an agent):** approving the seed URL list and checking each site's terms; **verifying every office, URL and helpline in `referrals.yaml`** (a wrong helpline is worse than none); approving every golden question and reference answer; the 30 human judge-calibration labels (incl. Urdu/Roman Urdu); running `antseed buyer start` and any account setup; recording the demo; being able to explain every decision (the brief's AI policy).
+**Human checkpoints (these stay with the student, not an agent):** approving the seed URL list and checking each site's terms; **verifying every office, URL and helpline in `referrals.yaml`** (a wrong helpline is worse than none); approving every golden question and reference answer; the 30 human judge-calibration labels (incl. Urdu/Roman Urdu); creating the NVIDIA API key and putting it in `.env` (never in chat or git), and any account setup; recording the demo; being able to explain every decision (the brief's AI policy).
 
 ---
 
 ## 16. Timeline to the deadline
 
+### 16.1 Locked minimum viable path (rev 5, feedback item 1)
+
+**The MVP is the only thing that must work.** It covers every mandatory rubric line, including the M7 gate. Everything outside it is stretch work, done only after the MVP's exit criterion is met.
+
+| # | MVP slice | Done when |
+|---|---|---|
+| 1 | **Ingest** PDF, HTML and DOCX (+ TXT/MD), with validation, SHA-256 dedupe, structure-aware chunking, text-quality check, and delete that removes the vectors | the seeded official corpus is indexed; duplicate → 409, bad type → 415, delete → 204 with 0 points left |
+| 2 | **Hybrid retrieval**: BGE-M3 dense + sparse in Qdrant, RRF, rerank, tenant filter | `/search` returns ranked chunks with a similarity score for every candidate |
+| 3 | **Answer with citations**: one NVIDIA model + Ollama fallback, JSON answer, quote verification, relevance gate refusal | `/ask` gives cited answers in EN/UR/Roman Urdu and refuses unanswerable questions |
+| 4 | **Auth**: JWT signup/login, tenant context from the token | a second user cannot see the first user's uploads |
+| 5 | **Eval**: golden set (student-approved), retrieval and answer metrics, LLM judge, 2+ configs compared, response cache | `make eval` writes EVAL.md tables reproducibly |
+| 6 | **Basic guardrails**: empty/long question, injection patterns, off-topic, forged-citation catch, secret redaction | the guardrail tests pass |
+| 7 | **Frontend**: upload, list, delete, chat with citations, chunks panel with counts and scores | demo flow works end to end |
+
+**Stretch, in this order (each starts only when the previous slice is done):**
+1. the remaining edge cases needed for B7 (8 shown);
+2. PPTX;
+3. multi-tenant quotas and fair GPU queue;
+4. GO-9/10/11 notices;
+5. Langfuse + `/metrics`;
+6. the full R1–R8 / G1–G3 grid;
+7. deployment;
+8. JPG/PNG OCR (D4).
+
+### 16.2 Days
+
 | Day | Work | Exit criterion |
 |---|---|---|
-| **Sun 22 Nov** | Blueprint rev 2 · seed URL list chosen · Phase 0 scaffold · A0–A5 started in parallel | contracts frozen; corpus downloading |
-| **Mon 23 Nov** | A0–A5 merged · A6 ask pipeline · golden set drafted and human-reviewed · notebooks 01–06 executed | `/ask` answers with verified citations locally in all 3 languages; UI chunks panel working |
-| **Tue 24 Nov** | A7 evals: retrieval grid + G1–G3 + judge calibration · A8 edge cases + deploy · review + fixes | `make eval` produces final numbers; public URL live |
-| **Wed 25 Nov** | DESIGN.md / EVAL.md with real numbers · screenshots · AI_USAGE.md · **demo video** · final push | submitted before the deadline |
+| **Sun 22 Nov (evening)** | P0 scaffold merged · NVIDIA key in `.env` + `check_models.py` · human checklist (`docs/HUMAN_TODO.md`) started · MVP slices 1–4 built in parallel branches | contracts frozen; the models in use are known to exist |
+| **Mon 23 Nov** | Slices merged and wired · corpus ingested · golden set written and **approved by the student** · notebooks 01–06 | `/ask` answers with verified citations locally in all 3 languages |
+| **Tue 24 Nov** | Slice 5 eval run (cached) · slice 7 frontend · stretch items in order · review + fixes | `make eval` produces final numbers |
+| **Wed 25 Nov** | DESIGN.md / EVAL.md with real numbers · screenshots · AI_USAGE.md · **demo video** · repo made public · final push | submitted before the deadline |
 
-If time runs short, cut in reverse priority. Mandatory items are never cut. The order is: **JPG/PNG ingestion (D4; drop PP-06 with it)** → B8 deployment → B3 dashboard page (keep Langfuse) → GO-3 groundedness check → `/ask/stream` → PPTX extractor.
+If time runs short, cut stretch items from the end of the list above. **MVP slices are never cut.**
 
 ---
 
@@ -1227,7 +1258,7 @@ If time runs short, cut in reverse priority. Mandatory items are never cut. The 
 Aim for 15–20 minutes, in the brief's order. Every handled edge case and guardrail appears on screen.
 
 1. **Intro:** who it serves (the general public, and helpdesks that assist them), the corpus (agencies, Punjab and Sindh, document count, file types, languages, why it is a fair test) and what the service does and does not do (information, not advice).
-2. **Architecture:** repo tree, upload → chunks flow, question → answer graph, local GPU models vs AntSeed open-weight LLMs.
+2. **Architecture:** repo tree, upload → chunks flow, question → answer graph, local GPU models vs NVIDIA-hosted open-weight LLMs.
 3. **Design decisions:** chunking, BGE-M3, Qdrant hybrid, reranker, the LLM chain and the privacy trade-off, each backed by its eval number.
 4. **Upload:** PDF + DOCX + HTML (+ PPTX/MD/TXT) through the UI; the list updates; metadata (agency, province, date).
 5. **Questions:** 3+ cited answers with the chunks panel (fetched/used/cited, similarity scores); a fee-table question (urgent vs normal passport) with its date notice; a superseded vs amended notification; "driving licence kaise banwayein?" answered per province; a personal-case question showing the "not legal advice" notice and referral (E44).
@@ -1235,7 +1266,7 @@ Aim for 15–20 minutes, in the brief's order. Every handled edge case and guard
 7. **Unanswerable:** clear refusal, no citations.
 8. **Delete:** delete a document, re-ask, and show its content no longer appears.
 9. **Guardrails:** empty, too long, off-topic, prompt injection (English + Urdu + Roman Urdu), jailbreak, system-prompt extraction (canary), forged-citation catch (notebook 05), document with hidden instructions.
-10. **Errors in Swagger:** 415, 409, 413, 404, 422, 429 (burst), 503 (stop Qdrant / stop the AntSeed proxy with Ollama off).
+10. **Errors in Swagger:** 415, 409, 413, 404, 422, 429 (burst), 503 (stop Qdrant / unset the NVIDIA key with Ollama off).
 11. **Edge cases:** scanned Urdu gazette notification (OCR), empty PDF, question before upload, stale fee schedule notice (E45), PUT revised fee schedule (logs show only changed chunks re-embedded), concurrent duplicate uploads, LLM fallback (`degraded` banner).
 12. **Evaluation:** run `make eval`; walk through EVAL.md: metrics, config comparison and winner, G1–G3 generator comparison, judge κ, multilingual results, closed-book contamination score, failure analysis.
 13. **Tests:** pytest run (counts + coverage), executed notebooks.
@@ -1260,7 +1291,7 @@ Aim for 15–20 minutes, in the brief's order. Every handled edge case and guard
 | **Free P2P sellers are unreliable** (offline, slow, gated) | failed answers, especially during the demo | model fallback chain + circuit breakers + Ollama fallback; pinned sellers for the eval; response cache; pre-flight check (`/health/ready`) before recording |
 | **Providers can read prompts** | privacy | public corpus only by default; `tee_required` and `local_only` modes; stated in DESIGN.md |
 | **Unknown Urdu/Roman Urdu quality** of newer open models | weak B2 results | G1–G3 measures it; Qwen3-235B as the multilingual challenger; translation variants for retrieval |
-| JSON / structured output not guaranteed via AntSeed | parse failures | tolerant parser + one repair retry; malformed-JSON rate reported per model in the eval |
+| JSON / structured output not guaranteed for every model | parse failures | tolerant parser + one repair retry; malformed-JSON rate reported per model in the eval |
 | **Urdu text extraction silently fails** (verified: junk Latin OCR layers, scrambled Urdu, vector-outline text) | junk chunks or missing Urdu content | per-page text-quality check with OCR fallback on rendered pages (E46); Urdu extraction quality reported per document |
 | **Tesseract not installed** (verified on this machine) | OCR tests and scanned sources fail | install Tesseract with `urd` + `eng` data on day 1; the Docker image bundles it |
 | **Reuse terms** (BISP forbids copying or conversion; NADRA, DGIP and the provinces reserve rights; only FBR permits unmodified copies) | licensing complaint | raw files never committed (D5); manual collection for blocked sites (D2, D3); BISP excluded and permission requested (D1); sources and dates cited on every answer |
@@ -1289,4 +1320,4 @@ Aim for 15–20 minutes, in the brief's order. Every handled edge case and guard
    - **D4:** JPG/PNG ingestion added.
 
    - **D5:** raw files stay out of git (decided 22 Nov).
-3. **AntSeed setup:** is the buyer proxy (`npm install -g @antseed/cli`, `antseed buyer start`) already installed, and does `GET /v1/models` list the models above under those ids?
+3. **NVIDIA key:** put `NVIDIA_API_KEY` in `.env`, then run `python scripts/check_models.py --probe` and replace any model id it reports missing.

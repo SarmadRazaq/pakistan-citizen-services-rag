@@ -62,9 +62,15 @@ class HealthService:
         return HealthResponse(status=status, version=__version__, components=components)
 
 
-def _http_probe(client: httpx.AsyncClient, url: str, *, models: bool = False) -> ProbeFn:
+def _http_probe(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    models: bool = False,
+    headers: dict[str, str] | None = None,
+) -> ProbeFn:
     async def check() -> tuple[bool, str | None]:
-        response = await client.get(url)
+        response = await client.get(url, headers=headers)
         if response.status_code != 200:
             return False, f"HTTP {response.status_code}"
         if models:
@@ -75,13 +81,28 @@ def _http_probe(client: httpx.AsyncClient, url: str, *, models: bool = False) ->
     return check
 
 
+def _missing(detail: str) -> ProbeFn:
+    async def check() -> tuple[bool, str | None]:
+        return False, detail
+
+    return check
+
+
 def default_probes(settings: Settings, client: httpx.AsyncClient) -> list[Probe]:
+    key = settings.nvidia_api_key
+    nvidia_check = (
+        _http_probe(
+            client,
+            f"{settings.nvidia_base_url.rstrip('/')}/models",
+            models=True,
+            headers={"Authorization": f"Bearer {key.get_secret_value()}"},
+        )
+        if key is not None and key.get_secret_value()
+        else _missing("NVIDIA_API_KEY is not set")
+    )
     return [
         Probe("qdrant", _http_probe(client, f"{settings.qdrant_url.rstrip('/')}/readyz")),
-        Probe(
-            "antseed_proxy",
-            _http_probe(client, f"{settings.antseed_base_url.rstrip('/')}/models", models=True),
-        ),
+        Probe("nvidia_api", nvidia_check),
         Probe(
             "ollama",
             _http_probe(client, f"{settings.ollama_base_url.rstrip('/')}/models", models=True),

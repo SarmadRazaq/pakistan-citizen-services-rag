@@ -17,3 +17,8 @@ aiosqlite
 pyjwt
 pwdlib[argon2]
 slowapi
+
+# Extraction and OCR (MVP slice 1)
+pymupdf
+pytesseract
+pillow

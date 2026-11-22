@@ -32,6 +32,8 @@ email-validator==2.4.0
     # via pydantic
 fastapi==0.165.0
     # via -r requirements.in
+flatbuffers==25.12.19
+    # via onnxruntime
 greenlet==3.5.6
     # via sqlalchemy
 grpcio==1.85.3
@@ -61,16 +63,34 @@ idna==3.20
     #   httpx
 limits==5.8.0
     # via slowapi
+networkx==3.7
+    # via pymupdf
 numpy==2.5.5
-    # via qdrant-client
+    # via
+    #   onnxruntime
+    #   pymupdf
+    #   qdrant-client
+onnxruntime==1.32.0
+    # via pymupdf
 opentelemetry-api==1.45.2
     # via fastapi
 packaging==26.3
-    # via limits
+    # via
+    #   limits
+    #   onnxruntime
+    #   pytesseract
+pillow==13.0.0
+    # via
+    #   -r requirements.in
+    #   pytesseract
 portalocker==4.4.2
     # via qdrant-client
 protobuf==7.36.2
-    # via qdrant-client
+    # via
+    #   onnxruntime
+    #   qdrant-client
+psutil==7.2.2
+    # via pymupdf
 pwdlib==0.4.2
     # via -r requirements.in
 pycparser==3.12 ; implementation_name != 'PyPy'
@@ -87,6 +107,21 @@ pydantic-settings==2.16.3
     # via -r requirements.in
 pyjwt==2.15.1
     # via -r requirements.in
+pymupdf==2.1
+    # via
+    #   -r requirements.in
+    #   pymupdf-layout
+    #   pymupdf4llm
+pymupdf-layout==2.1
+    # via
+    #   pymupdf
+    #   pymupdf4llm
+pymupdf4llm==2.1
+    # via
+    #   pymupdf
+    #   pymupdf-layout
+pytesseract==0.3.13
+    # via -r requirements.in
 python-dotenv==1.2.4
     # via
     #   pydantic-settings
@@ -94,7 +129,9 @@ python-dotenv==1.2.4
 python-multipart==0.0.34
     # via -r requirements.in
 pyyaml==6.0.4
-    # via uvicorn
+    # via
+    #   pymupdf
+    #   uvicorn
 qdrant-client==1.20.0
     # via -r requirements.in
 slowapi==0.1.10
@@ -105,6 +142,8 @@ starlette==1.10.0
     # via fastapi
 structlog==26.1.0
     # via -r requirements.in
+tabulate==0.10.0
+    # via pymupdf
 tenacity==9.2.1
     # via -r requirements.in
 typing-extensions==4.16.0

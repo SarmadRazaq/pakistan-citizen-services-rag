@@ -18,6 +18,7 @@ _SECRET_PATTERNS = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),  # JWT
     re.compile(r"\bhf_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bnvapi-[A-Za-z0-9_-]{20,}"),  # NVIDIA API key
     re.compile(r"\b0x[a-fA-F0-9]{64}\b"),  # private key
     re.compile(r"\b\d{5}-\d{7}-\d\b"),  # CNIC
 ]

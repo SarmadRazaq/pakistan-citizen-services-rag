@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-PrivacyMode = Literal["public", "tee_required", "local_only"]
+PrivateContextPolicy = Literal["hosted_with_notice", "local_only"]
 ResponseCacheMode = Literal["off", "eval_only"]
 Device = Literal["auto", "cuda", "cpu"]
 CsvList = Annotated[list[str], NoDecode]  # "a,b,c" in env, not JSON
@@ -38,25 +38,32 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     # --- LLM endpoints (OpenAI-compatible) ---
-    antseed_base_url: str = "http://127.0.0.1:8377/v1"
-    antseed_api_key: SecretStr = SecretStr("antseed")  # placeholder: the local proxy needs no key
+    # Hosted: NVIDIA API catalog (build.nvidia.com). Key goes in .env as NVIDIA_API_KEY, never in code.
+    # Model ids are verified against GET /v1/models by scripts/check_models.py.
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_api_key: SecretStr | None = None
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
     ollama_required: bool = False  # readiness does not fail when the local fallback is off
     generation_models: CsvList = Field(
         default_factory=lambda: [
-            "deepseek-v4-1-flash",
-            "qwen3-235b-a22b-instruct-2507",
-            "gemma-4-31b-it",
+            "deepseek-ai/deepseek-v3.1",
+            "qwen/qwen3-235b-a22b",
+            "meta/llama-3.3-70b-instruct",
         ]
     )
-    helper_model: str = "deepseek-v4-1-flash"
-    judge_model: str = "gpt-oss-120b"
+    helper_model: str = "meta/llama-3.3-70b-instruct"
+    judge_model: str = "openai/gpt-oss-120b"
     local_fallback_model: str = "qwen2.5:3b-instruct"
     llm_timeout_s: float = 45.0
     llm_helper_timeout_s: float = 20.0
     llm_max_attempts_per_model: int = 1
-    llm_privacy_mode: PrivacyMode = "public"
-    eval_pinned_sellers: dict[str, str] = Field(default_factory=dict)
+    llm_max_rpm: int = 35  # stay under the NVIDIA free-tier rate limit (~40 requests/minute)
+    llm_json_mode: bool = True  # send response_format={"type":"json_object"} where the model accepts it
+    # Where an answer that uses PRIVATE uploads may be generated (feedback item 5):
+    #   hosted_with_notice: NVIDIA API, and the answer carries a third_party_processing notice
+    #   local_only: private-context answers go to the local Ollama model only
+    private_context_policy: PrivateContextPolicy = "hosted_with_notice"
+    llm_cache_dir: Path = Path("evals/.cache/llm")  # eval response cache (RESPONSE_CACHE=eval_only)
 
     # --- Local models ---
     embedding_model: str = "BAAI/bge-m3"
@@ -111,7 +118,7 @@ class Settings(BaseSettings):
     emergency_guard: bool = True
     jurisdictions: CsvList = Field(default_factory=lambda: ["federal", "punjab", "sindh", "kp"])
     text_quality_min_script_ratio: float = 0.6
-    text_quality_min_dict_hit: float = 0.3
+    text_quality_min_dict_hit: float = 0.15  # measured: real EN table page 0.25, scrambled Urdu 0.01-0.03
 
     # --- Auth / observability ---
     jwt_secret: SecretStr = SecretStr("change-me-in-.env")

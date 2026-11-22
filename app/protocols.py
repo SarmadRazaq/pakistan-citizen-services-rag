@@ -197,7 +197,7 @@ class LLMMessage:
 @dataclass(frozen=True, slots=True)
 class LLMResult:
     text: str
-    endpoint: Literal["antseed", "ollama"]
+    endpoint: Literal["nvidia", "ollama"]
     model: str
     seller: str | None = None
     attempts: int = 1
@@ -209,7 +209,7 @@ class LLMResult:
 
 @runtime_checkable
 class LLMClient(Protocol):
-    """The LLMRouter: AntSeed fallback chain, then Ollama; raises AppError(LLM_UNAVAILABLE) at the end."""
+    """The LLMRouter: NVIDIA model chain, then Ollama; raises AppError(LLM_UNAVAILABLE) at the end."""
 
     async def complete(
         self,

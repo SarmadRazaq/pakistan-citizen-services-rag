@@ -72,6 +72,7 @@ class NoticeCode(StrEnum):
     REFERRAL = "referral"  # GO-9
     DATED_INFORMATION = "dated_information"  # GO-10
     EMERGENCY = "emergency"  # GO-11
+    THIRD_PARTY_PROCESSING = "third_party_processing"  # private uploads were sent to the hosted model
 
 
 class Base(BaseModel):
@@ -304,7 +305,7 @@ class GuardrailInfo(Base):
 
 
 class ProviderInfo(Base):
-    endpoint: Literal["antseed", "ollama", "none"]
+    endpoint: Literal["nvidia", "ollama", "none"]
     model: str | None = None
     seller: str | None = None
     attempts: int = 0

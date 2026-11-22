@@ -12,11 +12,11 @@ pin:
 	uv pip compile --universal requirements-dev.in -o requirements-dev.txt
 
 lint:
-	$(PY) -m ruff check app tests
-	$(PY) -m ruff format --check app tests
+	$(PY) -m ruff check app tests scripts
+	$(PY) -m ruff format --check app tests scripts
 
 fmt:
-	$(PY) -m ruff check app tests --fix
+	$(PY) -m ruff check app tests scripts --fix
 	$(PY) -m ruff format app tests
 
 types:
