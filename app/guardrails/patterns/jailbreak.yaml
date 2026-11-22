@@ -1,0 +1,96 @@
+# GI-5 jailbreak / role-play patterns (blueprint §7.1), English, Urdu and Roman Urdu.
+# Same matching rules as injection.yaml. Every rule needs a benign look-alike test.
+
+version: 1
+code: jailbreak_detected
+patterns:
+  # ---------------------------------------------------------------- English
+  - id: en_dan
+    lang: en
+    case_sensitive: true
+    regex: >-
+      \bDAN\b
+  - id: en_do_anything_now
+    lang: en
+    regex: >-
+      \bdo\s+anything\s+now\b
+  - id: en_developer_mode
+    lang: en
+    regex: >-
+      \b(?:developer|dev|god|debug|admin|sudo|unrestricted|unfiltered|jailbreak|evil|opposite)\s+mode\b
+  - id: en_jailbreak_word
+    lang: en
+    regex: >-
+      \bjail\s*br(?:eak|oken|eaking)\b
+  - id: en_no_rules
+    lang: en
+    regex: >-
+      \byou\s+(?:have|has|are\s+under|now\s+have)\s+no\s+(?:rules|restrictions|limits|limitations|filters|guidelines|boundaries|ethics|morals|policies)\b
+  - id: en_answer_without_restrictions
+    lang: en
+    regex: >-
+      \b(?:answer|respond|reply|talk|speak|act|write)\s+(?:\w+\s+){0,2}?without\s+(?:any\s+)?(?:restrictions|filters|censorship|rules|limits|limitations|guidelines|ethics)\b
+  - id: en_unfiltered_ai
+    lang: en
+    regex: >-
+      \b(?:unfiltered|uncensored|unrestricted|unaligned|jailbroken)\s+(?:mode|ai|assistant|model|version|response|answer|bot|chatbot|llm)\b
+  - id: en_you_are_now
+    lang: en
+    regex: >-
+      \byou\s+are\s+now\s+(?:free|unrestricted|unfiltered|uncensored|jailbroken|evil|dan|an?\s+(?:unrestricted|unfiltered|uncensored|evil|different)\s+(?:ai|assistant|model|bot))\b|\byou\s+are\s+no\s+longer\s+(?:bound|restricted|limited|an?\s+(?:ai|assistant|chatbot))\b
+  - id: en_pretend
+    lang: en
+    regex: >-
+      \bpretend\s+(?:that\s+)?(?:you\s+are|you're|you\s+were)\b|\brole-?play\s+as\b
+  - id: en_act_as_unrestricted
+    lang: en
+    regex: >-
+      \b(?:act|behave|respond)\s+as\s+(?:if\s+you\s+(?:are|were)\s+)?(?:an?\s+)?(?:unfiltered|uncensored|unrestricted|evil|jailbroken|different|rogue)\b
+  - id: en_stay_in_character
+    lang: en
+    regex: >-
+      \bstay\s+in\s+character\b|\bbreak\s+character\b
+  - id: en_hypothetical_bypass
+    lang: en
+    regex: >-
+      \b(?:hypothetically|in\s+a\s+fictional\s+world|for\s+a\s+(?:story|novel|movie)|imagine\s+(?:that\s+)?you\s+(?:are|were))\b.{0,80}\b(?:no\s+rules|no\s+restrictions|ignore\s+(?:your|the|all)|bypass|without\s+(?:any\s+)?(?:restrictions|rules|filters))\b
+
+  # ---------------------------------------------------------------- Urdu (Arabic script)
+  - id: ur_developer_mode
+    lang: ur
+    regex: >-
+      (?:ڈیولپر|ڈویلپر|ڈیویلپر|گاڈ)\s*موڈ
+  - id: ur_jailbreak_word
+    lang: ur
+    regex: >-
+      جیل\s*بریک
+  - id: ur_no_rules
+    lang: ur
+    regex: >-
+      (?:تمہارے|تمھارے|تمہاری|آپ\s+کے|آپ\s+کی|تم\s+پر|آپ\s+پر)\s+(?:لیے\s+|لئے\s+)?(?:اب\s+)?کوئی\s+(?:اصول|قواعد|قانون|پابندی|پابندیاں|حدود|حد)\s+(?:نہیں|لاگو\s+نہیں)
+  - id: ur_without_restrictions
+    lang: ur
+    regex: >-
+      (?:بغیر\s+کسی|بلا)\s+(?:پابندی|روک\s*ٹوک|فلٹر|اصول)\s+(?:کے\s+)?(?:جواب|بات|لکھو|بتاؤ)
+  - id: ur_you_are_now_free
+    lang: ur
+    regex: >-
+      (?:تم|آپ)\s+اب\s+(?:آزاد|بے\s*لگام|بغیر\s+پابندی)
+
+  # ---------------------------------------------------------------- Roman Urdu
+  - id: ru_no_rules
+    lang: roman_ur
+    regex: >-
+      \b(?:tumhare|tumhari|tumhary|tumharay|aap\s+ke|aapke|apke|tum\s+par|aap\s+par)\s+(?:liye\s+|liay\s+)?(?:ab\s+)?koi\s+(?:rules?|usool|asool|qanoon|pabandi|pabandiyan|restrictions?|hudood|limits?|had)\s+(?:nahi|nahin|nai|nhi)\b
+  - id: ru_without_restrictions
+    lang: roman_ur
+    regex: >-
+      \bbina\s+(?:kisi\s+)?(?:pabandi|restriction|restrictions|filter|rules?|rok\s*tok)\s+(?:ke\s+)?(?:jawab|jwab|reply|answer|baat|likho|batao)
+  - id: ru_you_are_now_free
+    lang: roman_ur
+    regex: >-
+      \b(?:tum|aap)\s+ab\s+(?:azad|aazad|free|unrestricted|dan)\s+(?:ho|hain|hai)\b
+  - id: ru_ban_jao
+    lang: roman_ur
+    regex: >-
+      \b(?:ban\s+jao|bano|ban\s+jaen)\b.{0,40}\b(?:dan|unfiltered|uncensored|jailbroken)\b|\b(?:dan|unfiltered|uncensored)\s+ban\s+(?:jao|jaen|jayen)\b
