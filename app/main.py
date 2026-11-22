@@ -52,12 +52,9 @@ async def _wire_runtime(app: FastAPI, settings: Settings, db: Database) -> list[
 
     app.state.ask = build_ask_service(settings, db, retrieval.retriever, llm_hosted=hosted, llm_local=local)
 
-    try:
-        from app.ingestion.service import build_document_service  # type: ignore[attr-defined,import-not-found,unused-ignore]
-    except ImportError:  # ingestion not merged yet
-        build_document_service = None
-    if build_document_service is not None:
-        app.state.documents = build_document_service(settings, db, retrieval.store, retrieval.embedder)
+    from app.ingestion.service import IngestionService
+
+    app.state.documents = IngestionService(settings, db, retrieval.store, retrieval.embedder)
     return closables
 
 

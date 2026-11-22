@@ -42,7 +42,7 @@ jobs:
           if [ -n "$offenders" ]; then echo "qdrant_client imported outside vector_store.py:"; echo "$offenders"; exit 1; fi
 
       - name: Lint
-        run: .venv/bin/python -m ruff check app tests && .venv/bin/python -m ruff format --check app tests
+        run: .venv/bin/python -m ruff check app tests scripts evals && .venv/bin/python -m ruff format --check app tests scripts evals
 
       - name: Types
         run: .venv/bin/python -m mypy
@@ -68,6 +68,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run build
+      - run: npm test
 
   secrets:
     runs-on: ubuntu-latest

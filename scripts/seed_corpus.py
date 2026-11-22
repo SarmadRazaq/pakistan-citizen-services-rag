@@ -166,6 +166,9 @@ async def amain(args: argparse.Namespace) -> int:
     db = Database(settings.database_url)
     await db.create_all()
     store, embedder = load_components(args.components, settings)
+    ensure = getattr(store, "ensure_collection", None)
+    if ensure is not None:
+        await ensure()
     service = IngestionService(settings, db, store, embedder)
     try:
         report = await seed(service, db, read_manifest(args.manifest), uses=args.uses)
