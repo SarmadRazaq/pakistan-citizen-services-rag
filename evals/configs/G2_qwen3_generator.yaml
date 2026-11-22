@@ -1,0 +1,14 @@
+# G2: generator comparison (blueprint §10.6, G1-G3). Same retrieval as the baseline, a different
+# generation model. NEEDS SERVICE SUPPORT (X-Eval-Config header: generation_model). Not in the
+# default run: name it with --configs. Check the id first with scripts/check_models.py.
+name: G2_qwen3_generator
+description: "Baseline retrieval, generator = Qwen3-235B-A22B"
+kind: service
+default: false
+request:
+  top_k: 5
+  search_top_k: 20
+  answer_language: auto
+  scope: public
+overrides:
+  generation_model: qwen/qwen3-235b-a22b

@@ -1,0 +1,14 @@
+# R4 hybrid_rerank: the BASELINE (blueprint §10.6). The service exactly as deployed:
+# BGE-M3 dense + sparse, RRF fusion, bge-reranker, default chunking. No overrides, so it needs
+# no service-side support and is always comparable.
+name: R4_hybrid_rerank
+description: "Baseline: hybrid dense+sparse (RRF) + reranker, the service defaults"
+kind: service
+baseline: true
+default: true
+request:
+  top_k: 5            # chunks used as /ask context (AskRequest.top_k, 1..10)
+  search_top_k: 20    # candidates returned by /search for Hit@k / MRR / nDCG (>= 10)
+  answer_language: auto   # auto | item (the item's answer_language) | en | ur | roman_ur
+  scope: public           # the official corpus only, never the eval user's uploads
+overrides: {}

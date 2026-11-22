@@ -1,0 +1,14 @@
+# Optional evaluation extras (blueprint §10.4). NOT needed for `python -m evals.run`:
+# the harness (metrics, LLM judge, runner, reports, calibration) uses only the runtime requirements
+# (httpx, pydantic, pyyaml). RAGAS is wired in behind an optional adapter, evals/ragas_eval.py, which
+# reports itself unavailable when this file is not installed, and runs only with `--ragas`.
+#
+# Install:   uv pip install --python .venv -r requirements-eval.in
+# Pin:       uv pip compile --universal requirements-eval.in -o requirements-eval.txt
+#
+# Checked 22 Nov against requirements.txt: it resolves with no conflicts (ragas 0.3.1), but adds about
+# 79 packages, including datasets, pyarrow, pandas, numpy, langchain-community and tiktoken. That is
+# why it stays out of requirements.txt / requirements-dev.txt, CI and the CPU image.
+-c requirements.txt
+
+ragas
