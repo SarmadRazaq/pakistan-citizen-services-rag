@@ -229,7 +229,8 @@ def test_device_selection(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.filterwarnings("ignore:Payload indexes have no effect:UserWarning")
 async def test_factory_builds_without_loading_models(settings: Settings) -> None:
-    bundle = build_retrieval(settings, qdrant_location=":memory:")
+    local = settings.model_copy(update={"embedding_provider": "local", "reranker_provider": "local"})
+    bundle = build_retrieval(local, qdrant_location=":memory:")
     assert not bundle.embedder.loaded and not bundle.reranker.loaded
     assert bundle.embedder.dimension == 1024
     assert bundle.store.dense_dim == 1024

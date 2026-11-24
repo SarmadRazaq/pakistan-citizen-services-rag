@@ -108,7 +108,9 @@ async def close_worlds() -> AsyncIterator[None]:
 
 
 def make_settings(**overrides: Any) -> Settings:
-    return Settings(_env_file=None, app_env="test", log_level="WARNING", **overrides)  # type: ignore[call-arg]
+    values: dict[str, Any] = {"local_fallback_enabled": True}  # the scripted worlds include the local model
+    values.update(overrides)
+    return Settings(_env_file=None, app_env="test", log_level="WARNING", **values)  # type: ignore[call-arg]
 
 
 async def add_doc(

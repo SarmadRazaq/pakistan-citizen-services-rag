@@ -21,7 +21,7 @@ from app.core.auth_service import AuthService
 from app.core.errors import install_error_handlers
 from app.core.health import HealthService, default_probes
 from app.core.logging import configure_logging
-from app.core.middleware import RequestContextMiddleware
+from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.ratelimit import install_rate_limits
 from app.db.session import Database
 
@@ -35,6 +35,7 @@ async def _wire_runtime(app: FastAPI, settings: Settings, db: Database) -> list[
     """
     from app.generation.llm import build_llm_clients
     from app.generation.service import build_ask_service
+    from app.guardrails.input_guards import build_injection_classifier
     from app.retrieval.factory import build_retrieval
 
     closables: list[object] = []
@@ -50,7 +51,12 @@ async def _wire_runtime(app: FastAPI, settings: Settings, db: Database) -> list[
     closables.extend([hosted, local])
     app.state.llm, app.state.llm_local = hosted, local
 
-    app.state.ask = build_ask_service(settings, db, retrieval.retriever, llm_hosted=hosted, llm_local=local)
+    classifier = build_injection_classifier(settings)
+    if classifier is not None:
+        closables.append(classifier)
+    app.state.ask = build_ask_service(
+        settings, db, retrieval.retriever, llm_hosted=hosted, llm_local=local, classifier=classifier
+    )
 
     from app.ingestion.service import IngestionService
 
@@ -129,6 +135,7 @@ def create_app(
         expose_headers=["X-Request-ID", "Location", "Retry-After"],
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.app_env == "prod")  # outermost
     if wire:
         install_rate_limits(app, settings)
 

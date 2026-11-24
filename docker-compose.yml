@@ -1,8 +1,9 @@
-# Local stack. Start only the vector DB:   docker compose up -d qdrant
-# Start everything (API in a container):  docker compose --profile api up -d --build
+# Local / single-host stack. Start only the vector DB:   docker compose up -d qdrant
+# Start everything (API + web):  docker compose --profile api up -d --build
 #
-# The AntSeed buyer proxy runs on the host (`antseed buyer start`, 127.0.0.1:8377) and is never
-# exposed publicly. The API container reaches it through host.docker.internal.
+# Everything is bound to 127.0.0.1; a reverse proxy on the host terminates TLS in front (docs/DEPLOY.md).
+# All models are hosted (NVIDIA API); only Tesseract OCR runs locally. The API runs ONE process per
+# container: in-process document locks, ingestion jobs and rate limits assume it.
 
 services:
   qdrant:
@@ -12,6 +13,13 @@ services:
       - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
+    healthcheck:
+      # The image has no curl; open a TCP connection to the REST port instead.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   api:
@@ -22,18 +30,30 @@ services:
     env_file: .env
     environment:
       QDRANT_URL: http://qdrant:6333
-      ANTSEED_BASE_URL: http://host.docker.internal:8377/v1
-      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
       DATABASE_URL: sqlite+aiosqlite:////data/app.sqlite3
       STORAGE_DIR: /data/storage
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - api_data:/data
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    profiles: ["api"]
+    build:
+      context: ./frontend
+    environment:
+      API_BASE_URL: http://api:8000
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   qdrant_storage:

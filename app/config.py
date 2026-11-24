@@ -10,12 +10,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PrivateContextPolicy = Literal["hosted_with_notice", "local_only"]
 ResponseCacheMode = Literal["off", "eval_only"]
 Device = Literal["auto", "cuda", "cpu"]
+Provider = Literal["nvidia", "local"]
+InjectionProvider = Literal["nvidia", "none"]
+DEFAULT_JWT_SECRET = "change-me-in-.env"  # noqa: S105 - the placeholder, rejected in prod
+MIN_JWT_SECRET_CHARS = 32
 CsvList = Annotated[list[str], NoDecode]  # "a,b,c" in env, not JSON
 
 
@@ -27,7 +31,9 @@ def _split_csv(value: object) -> object:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+    )
 
     # --- App ---
     app_env: Literal["dev", "test", "prod"] = "dev"
@@ -65,8 +71,23 @@ class Settings(BaseSettings):
     private_context_policy: PrivateContextPolicy = "hosted_with_notice"
     llm_cache_dir: Path = Path("evals/.cache/llm")  # eval response cache (RESPONSE_CACHE=eval_only)
 
-    # --- Local models ---
-    embedding_model: str = "BAAI/bge-m3"
+    # --- Hosted retrieval models (default; NVIDIA API catalog, same NVIDIA_API_KEY) ---
+    embedding_provider: Provider = "nvidia"
+    hosted_embedding_model: str = "baai/bge-m3"
+    embedding_dimension: int = 1024
+    reranker_provider: Provider = "nvidia"
+    hosted_reranker_model: str = "nvidia/llama-3.2-nv-rerankqa-1b-v2"
+    hosted_reranker_url: str | None = None  # default derived from nvidia_retrieval_base_url + model
+    nvidia_retrieval_base_url: str = "https://ai.api.nvidia.com/v1/retrieval"
+    injection_provider: InjectionProvider = "nvidia"
+    jailbreak_detect_url: str = "https://ai.api.nvidia.com/v1/security/nvidia/nemoguard-jailbreak-detect"
+    hosted_retrieval_timeout_s: float = 20.0
+    # Ollama answers when every hosted model failed (degraded=True). Off by default; required by
+    # private_context_policy=local_only.
+    local_fallback_enabled: bool = False
+
+    # --- Local models (optional: EMBEDDING_PROVIDER / RERANKER_PROVIDER = local, or the tokenizer) ---
+    embedding_model: str = "BAAI/bge-m3"  # also the tokenizer that sizes Chunks
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     injection_model: str = "meta-llama/Llama-Prompt-Guard-2-86M"
     embed_batch_size: int = 32
@@ -121,7 +142,7 @@ class Settings(BaseSettings):
     text_quality_min_dict_hit: float = 0.15  # measured: real EN table page 0.25, scrambled Urdu 0.01-0.03
 
     # --- Auth / observability ---
-    jwt_secret: SecretStr = SecretStr("change-me-in-.env")
+    jwt_secret: SecretStr = SecretStr(DEFAULT_JWT_SECRET)
     jwt_ttl_min: int = 30
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
@@ -138,6 +159,43 @@ class Settings(BaseSettings):
     health_probe_timeout_s: float = 2.0
 
     _split = field_validator("cors_origins", "generation_models", "jurisdictions", mode="before")(_split_csv)
+
+    @model_validator(mode="after")
+    def _local_only_needs_local_model(self) -> Settings:
+        if self.private_context_policy == "local_only" and not self.local_fallback_enabled:
+            raise ValueError("PRIVATE_CONTEXT_POLICY=local_only requires LOCAL_FALLBACK_ENABLED=true")
+        return self
+
+    @model_validator(mode="after")
+    def _production_checks(self) -> Settings:
+        """Refuse to start in prod with insecure defaults. Lists every problem; never echoes a secret."""
+        if self.app_env != "prod":
+            return self
+        problems: list[str] = []
+        secret = self.jwt_secret.get_secret_value()
+        if secret == DEFAULT_JWT_SECRET:
+            problems.append("JWT_SECRET is still the default value")
+        elif len(secret) < MIN_JWT_SECRET_CHARS:
+            problems.append(f"JWT_SECRET must be at least {MIN_JWT_SECRET_CHARS} characters")
+        if self.nvidia_api_key is None or not self.nvidia_api_key.get_secret_value().strip():
+            problems.append("NVIDIA_API_KEY must be set")
+        if not self.cors_origins:
+            problems.append("CORS_ORIGINS must not be empty")
+        elif "*" in self.cors_origins:
+            problems.append("CORS_ORIGINS must not contain '*'")
+        if self.log_question_text:
+            problems.append("LOG_QUESTION_TEXT must be false")
+        if problems:
+            raise ValueError("Invalid production configuration: " + "; ".join(problems))
+        return self
+
+    @property
+    def reranker_url(self) -> str:
+        """Reranking endpoint: HOSTED_RERANKER_URL, else derived from the retrieval base URL and model."""
+        if self.hosted_reranker_url:
+            return self.hosted_reranker_url
+        model = self.hosted_reranker_model.replace(".", "_")
+        return f"{self.nvidia_retrieval_base_url.rstrip('/')}/{model}/reranking"
 
     @property
     def max_upload_bytes(self) -> int:
