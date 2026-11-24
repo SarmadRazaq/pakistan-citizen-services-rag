@@ -529,3 +529,113 @@ def test_outcome_precedence() -> None:
     assert outcome_for(answerable=True, degraded=False, unanswered_parts=["x"]) is Outcome.PARTIAL_ANSWER
     assert outcome_for(answerable=True, degraded=True, unanswered_parts=["x"]) is Outcome.DEGRADED_ANSWER
     assert outcome_for(answerable=False, degraded=True, unanswered_parts=[]) is Outcome.REFUSAL
+
+
+# ---------------------------------------------------------------- GO-11 emergency Notice
+
+EMERGENCY_YAML = {
+    "entries": [
+        {
+            "id": "rescue",
+            "topics": ["rights"],
+            "triggers": ["emergency"],
+            "jurisdiction": "federal",
+            "name": "Rescue 1122",
+            "contact": "1122",
+            "source_url": "https://rescue.gov.pk/",
+            "verified": True,
+        },
+        {
+            "id": "unverified_emergency",
+            "topics": ["rights"],
+            "triggers": ["emergency"],
+            "jurisdiction": "federal",
+            "name": "Unverified emergency line",
+            "contact": "0000",
+            "verified": False,
+        },
+    ]
+}
+EMERGENCY_QUESTION = "My husband is beating me, what is the urgent passport fee?"
+
+
+def _codes(res) -> list[NoticeCode]:  # type: ignore[no-untyped-def]
+    return [n.code for n in res.notices]
+
+
+async def test_emergency_notices_come_first_on_an_answer() -> None:
+    world = await make_world(
+        hosted=[helper_reply(), answer_reply(GOOD_ANSWER, [("S1", GOOD_QUOTE)])],
+        referrals=parse_referrals(EMERGENCY_YAML),
+    )
+    await add_doc(world, "d_pass", PASSPORT_TEXT)
+    res = await world.service.ask(user(), AskRequest(question=EMERGENCY_QUESTION))
+    assert res.answerable is True and res.answer  # the relevant answer is still returned
+    assert _codes(res)[:2] == [NoticeCode.EMERGENCY, NoticeCode.EMERGENCY]
+    assert res.notices[0].contact is None  # the generic Notice comes first
+    assert res.notices[1].contact == "1122"
+    assert res.notices[1].source_url == "https://rescue.gov.pk/"
+    assert "0000" not in [n.contact for n in res.notices]  # unverified entries never surface
+
+
+async def test_emergency_notices_precede_not_advice() -> None:
+    world = await make_world(
+        hosted=[helper_reply(advice_request=True), answer_reply(GOOD_ANSWER, [("S1", GOOD_QUOTE)])],
+        referrals=parse_referrals(EMERGENCY_YAML),
+    )
+    await add_doc(world, "d_pass", PASSPORT_TEXT)
+    res = await world.service.ask(user(), AskRequest(question=EMERGENCY_QUESTION))
+    codes = _codes(res)
+    assert codes[0] is NoticeCode.EMERGENCY
+    assert NoticeCode.NOT_ADVICE in codes
+    last_emergency = max(i for i, c in enumerate(codes) if c is NoticeCode.EMERGENCY)
+    assert codes.index(NoticeCode.NOT_ADVICE) > last_emergency
+
+
+async def test_emergency_notices_on_a_no_documents_refusal() -> None:
+    world = await make_world(referrals=parse_referrals(EMERGENCY_YAML))
+    res = await world.service.ask(user(), AskRequest(question="My child is missing since this morning"))
+    assert res.refusal_reason is RefusalReason.NO_DOCUMENTS
+    assert world.hosted.seen == []  # only the code pattern could detect it
+    assert _codes(res)[0] is NoticeCode.EMERGENCY
+    assert res.notices[0].contact is None
+    assert "1122" in [n.contact for n in res.notices]
+
+
+async def test_emergency_notice_without_any_referral_is_the_generic_one() -> None:
+    world = await make_world()
+    res = await world.service.ask(user(), AskRequest(question="My child is missing since this morning"))
+    assert _codes(res) == [NoticeCode.EMERGENCY]
+    assert res.notices[0].contact is None and res.notices[0].message
+
+
+async def test_helper_emergency_flag_alone_triggers_the_notice() -> None:
+    world = await make_world(
+        hosted=[helper_reply(emergency=True), answer_reply(GOOD_ANSWER, [("S1", GOOD_QUOTE)])],
+        referrals=parse_referrals(EMERGENCY_YAML),
+    )
+    await add_doc(world, "d_pass", PASSPORT_TEXT)
+    res = await world.service.ask(user(), AskRequest(question="What is the urgent passport fee?"))
+    assert _codes(res)[0] is NoticeCode.EMERGENCY
+    assert "1122" in [n.contact for n in res.notices]
+
+
+async def test_emergency_guard_off_has_no_emergency_notice() -> None:
+    world = await make_world(
+        hosted=[helper_reply(emergency=True), answer_reply(GOOD_ANSWER, [("S1", GOOD_QUOTE)])],
+        referrals=parse_referrals(EMERGENCY_YAML),
+        emergency_guard=False,
+    )
+    await add_doc(world, "d_pass", PASSPORT_TEXT)
+    res = await world.service.ask(user(), AskRequest(question=EMERGENCY_QUESTION))
+    assert NoticeCode.EMERGENCY not in _codes(res)
+
+
+async def test_plain_question_has_no_emergency_notice() -> None:
+    world = await make_world(
+        hosted=[helper_reply(), answer_reply(GOOD_ANSWER, [("S1", GOOD_QUOTE)])],
+        referrals=parse_referrals(EMERGENCY_YAML),
+    )
+    await add_doc(world, "d_pass", PASSPORT_TEXT)
+    res = await world.service.ask(user(), AskRequest(question="What is the urgent passport fee?"))
+    assert NoticeCode.EMERGENCY not in _codes(res)

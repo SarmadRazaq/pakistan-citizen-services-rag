@@ -24,6 +24,7 @@ from app.core.errors import AppError
 from app.generation.answer import extract_json_object
 from app.generation.prompts import build_helper_messages
 from app.guardrails.advice import is_advice_request
+from app.guardrails.emergency import is_emergency
 from app.guardrails.patterns import normalize_for_matching
 from app.protocols import LLMClient, LLMResult
 from app.schemas import Jurisdiction, LanguageCode
@@ -224,6 +225,7 @@ class HelperOutput(BaseModel):
     advice_request: bool = False
     off_topic: bool = False
     injection_suspect: bool = False
+    emergency: bool = False
 
     @field_validator("sub_queries", "agencies", "jurisdictions", mode="before")
     @classmethod
@@ -241,7 +243,7 @@ class HelperOutput(BaseModel):
     def _as_text(cls, value: object) -> str | None:
         return value.strip() or None if isinstance(value, str) else None
 
-    @field_validator("advice_request", "off_topic", "injection_suspect", mode="before")
+    @field_validator("advice_request", "off_topic", "injection_suspect", "emergency", mode="before")
     @classmethod
     def _as_bool(cls, value: object) -> bool:
         if isinstance(value, str):
@@ -261,6 +263,7 @@ class QueryUnderstanding:
     advice_request: bool = False
     off_topic: bool = False
     injection_suspect: bool = False
+    emergency: bool = False
     helper_ok: bool = False
     flags: tuple[str, ...] = ()
     usage: tuple[int, int] = (0, 0)  # helper input/output tokens
@@ -302,12 +305,14 @@ async def understand(question: str, llm: LLMClient | None) -> QueryUnderstanding
     code_jurisdictions = detect_jurisdictions(question)
     code_agencies = detect_agencies(question)
     code_advice = is_advice_request(question)
+    code_emergency = is_emergency(question)
     degraded = QueryUnderstanding(
         original=question,
         language=language,
         agencies=code_agencies,
         jurisdictions=code_jurisdictions,
         advice_request=code_advice,
+        emergency=code_emergency,
         variants=(question,),
         flags=("understand_degraded",),
     )
@@ -353,6 +358,7 @@ async def understand(question: str, llm: LLMClient | None) -> QueryUnderstanding
         advice_request=parsed.advice_request or code_advice,
         off_topic=parsed.off_topic,
         injection_suspect=parsed.injection_suspect,
+        emergency=parsed.emergency or code_emergency,
         helper_ok=True,
         flags=flags,
         usage=usage,
