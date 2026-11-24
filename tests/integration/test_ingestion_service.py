@@ -385,6 +385,23 @@ async def test_concurrent_duplicate_uploads(
         await database.dispose()
 
 
+async def test_same_file_saved_by_a_concurrent_upload_is_a_file_duplicate(
+    tmp_path: Path, service: IngestionService, monkeypatch: pytest.MonkeyPatch
+) -> None:  # E16, ISSUE-001
+    """The losing upload of a race may pass the file-hash check before the winner's row exists and
+    only meet that row at the text-hash check. It is still the same file, so DUPLICATE_DOCUMENT."""
+    path = write(tmp_path / "same.md", markdown(SECTION_TEXT))
+    await _upload(service, USER_A, path)  # the winner's row is in place
+
+    async def passed_before_the_winner_saved(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(service, "_check_file_duplicate", passed_before_the_winner_saved)
+    with pytest.raises(AppError) as info:
+        await _upload(service, USER_A, path)
+    assert info.value.code is ErrorCode.DUPLICATE_DOCUMENT
+
+
 # ---------------------------------------------------------------- read / tenancy
 
 

@@ -320,7 +320,13 @@ class IngestionService:
             await self._purge(ctx, failed_id)
 
     async def _check_content_duplicate(
-        self, ctx: TenantContext, owner: str, text_sha: str, exclude: str | None = None
+        self,
+        ctx: TenantContext,
+        owner: str,
+        text_sha: str,
+        exclude: str | None = None,
+        *,
+        file_sha: str | None = None,
     ) -> None:
         async with self.db.session(ctx) as s:
             stmt = select(Document).where(
@@ -331,6 +337,14 @@ class IngestionService:
             if exclude:
                 stmt = stmt.where(Document.id != exclude)
             existing = (await s.scalars(stmt)).first()
+            if existing is not None and file_sha is not None and existing.file_sha256 == file_sha:
+                # The same file, saved by a concurrent upload after this one passed the file-hash
+                # check (E16): report it as the file duplicate it is, not as a content duplicate.
+                raise AppError(
+                    ErrorCode.DUPLICATE_DOCUMENT,
+                    f"This file was already uploaded as '{existing.file_name}'.",
+                    extra={"existing_document_id": existing.id},
+                )
             if existing is not None:
                 raise AppError(
                     ErrorCode.DUPLICATE_CONTENT,
@@ -598,7 +612,7 @@ class IngestionService:
             file_type, file_sha = await self._validate(file)
             await self._check_file_duplicate(ctx, owner, file_sha)
             prepared = await self._extract(file, file_type, file_sha)
-            await self._check_content_duplicate(ctx, owner, prepared.text_sha256)
+            await self._check_content_duplicate(ctx, owner, prepared.text_sha256, file_sha=file_sha)
             await self._check_chunk_quota(ctx, owner, len(prepared.chunks), None)
             meta = self._infer_meta(metadata, prepared, file_name, source_url, doc_type)
 
