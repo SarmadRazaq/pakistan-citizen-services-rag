@@ -110,3 +110,11 @@ def match_referrals(
         return exact[:limit]
     generic = [r for r in pool if "legal_advice" in r.triggers]
     return generic[:limit]
+
+
+def match_emergency_referrals(
+    referrals: Iterable[Referral], *, jurisdictions: Iterable[str]
+) -> list[Referral]:
+    """Verified Referrals with the `emergency` trigger in the given jurisdictions (federal always)."""
+    wanted_places = {j.lower() for j in jurisdictions if j} | {"federal"}
+    return [r for r in referrals if "emergency" in r.triggers and r.jurisdiction in wanted_places]

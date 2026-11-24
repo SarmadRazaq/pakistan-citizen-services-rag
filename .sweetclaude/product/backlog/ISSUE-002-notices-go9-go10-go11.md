@@ -2,7 +2,7 @@
 id: ISSUE-002
 title: 'GO-9/10/11 notices: wire the emergency Notice'
 type: net-new-feature
-status: new
+status: done
 created: '2026-11-24T00:00:00+00:00'
 updated: '2026-11-24T00:00:00+00:00'
 priority: P2

@@ -41,9 +41,10 @@ from app.generation.prompts import (
     message,
 )
 from app.generation.query_understanding import QueryUnderstanding, detect_language, understand
-from app.guardrails.advice import Referral, match_referrals
+from app.guardrails.advice import Referral, match_emergency_referrals, match_referrals
+from app.guardrails.emergency import is_emergency
 from app.guardrails.input_guards import check_question
-from app.guardrails.output_guards import DatedSource, advice_notices, dated_notices
+from app.guardrails.output_guards import DatedSource, advice_notices, dated_notices, emergency_notices
 from app.protocols import (
     Candidate,
     InjectionClassifier,
@@ -89,6 +90,7 @@ class AskState(TypedDict, total=False):
     error: AppError | None
     question: str
     guard_input: str
+    emergency: bool
     understanding: QueryUnderstanding
     answer_language: LanguageCode
     filters: SearchFilters
@@ -180,7 +182,20 @@ def build_graph(deps: PipelineDeps) -> Any:
         result = await check_question(
             state["request"].question, max_chars=settings.max_question_chars, classifier=deps.classifier
         )
-        return {"question": result.text, "guard_input": result.status, "flags": list(result.flags)}
+        return {
+            "question": result.text,
+            "guard_input": result.status,
+            "flags": list(result.flags),
+            "emergency": is_emergency(result.text),
+        }
+
+    def emergency_for(state: AskState, language: LanguageCode) -> list[Notice]:
+        """GO-11: the emergency Notices (generic first) when the guard is on and the flag is set."""
+        if not (settings.emergency_guard and state.get("emergency")):
+            return []
+        q = state.get("understanding")
+        places = {j.value for j in q.jurisdictions} if q else set()
+        return emergency_notices(language, match_emergency_referrals(deps.referrals, jurisdictions=places))
 
     async def corpus_check(state: AskState) -> dict[str, Any]:
         ctx, request = state["ctx"], state["request"]
@@ -199,6 +214,7 @@ def build_graph(deps: PipelineDeps) -> Any:
             "understanding": q,
             "answer_language": answer_language_for(state["request"], q.language),
             "flags": list(q.flags),
+            "emergency": state.get("emergency", False) or q.emergency,
         }
         if q.off_topic:
             update |= {"refuse": True, "refusal_reason": RefusalReason.OFF_TOPIC}
@@ -354,7 +370,7 @@ def build_graph(deps: PipelineDeps) -> Any:
         citations = check.verification.citations if check.verification else ()
         context = state["retrieval"].context
         cited = [context[int(c.marker[1:]) - 1] for c in citations]
-        notices: list[Notice] = []
+        notices = emergency_for(state, language)
         if q.advice_request and settings.advice_guard:
             topics = {c.point.payload.topic or "" for c in cited}
             places = {j.value for j in q.jurisdictions} | {c.point.payload.jurisdiction or "" for c in cited}
@@ -398,7 +414,7 @@ def build_graph(deps: PipelineDeps) -> Any:
             "citations": (),
             "unanswered_parts": list(check.unanswered_parts) if check else [],
             "answer_language": language,
-            "notices": [],
+            "notices": emergency_for(state, language),
         }
 
     # ------------------------------------------------------------ edges

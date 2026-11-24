@@ -176,6 +176,7 @@ def helper_reply(**overrides: Any) -> str:
         "advice_request": False,
         "off_topic": False,
         "injection_suspect": False,
+        "emergency": False,
     }
     body.update(overrides)
     return "Here is the analysis:\n" + json.dumps(body)

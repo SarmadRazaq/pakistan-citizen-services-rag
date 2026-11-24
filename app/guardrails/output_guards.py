@@ -100,6 +100,21 @@ def advice_notices(language: LanguageCode, referrals: Sequence[Referral]) -> lis
     return notices
 
 
+def emergency_notices(language: LanguageCode, referrals: Sequence[Referral]) -> list[Notice]:
+    """A generic emergency Notice, then one per matched *verified* emergency Referral."""
+    notices = [Notice(code=NoticeCode.EMERGENCY, message=message("emergency", language))]
+    for ref in referrals:
+        notices.append(
+            Notice(
+                code=NoticeCode.EMERGENCY,
+                message=message("emergency_referral", language, name=ref.name),
+                contact=ref.contact,
+                source_url=ref.source_url,
+            )
+        )
+    return notices
+
+
 def add_months(day: date, months: int) -> date:
     month_index = day.month - 1 + months
     year, month = day.year + month_index // 12, month_index % 12 + 1
