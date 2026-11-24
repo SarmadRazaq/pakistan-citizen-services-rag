@@ -53,7 +53,14 @@ from app.ingestion.cleaning import clean_blocks, join_blocks
 from app.ingestion.extractors import default_extractors, extractor_for
 from app.ingestion.guards import INJECTION_FLAG_THRESHOLD, heuristic_injection_score
 from app.ingestion.language import majority_language, normalize_for_index
-from app.ingestion.metadata import find_effective_date, infer_agency, infer_jurisdiction, infer_topic
+from app.ingestion.metadata import (
+    TOPICS,
+    find_effective_date,
+    infer_agency,
+    infer_jurisdiction,
+    infer_topic,
+    normalize_topic,
+)
 from app.ingestion.ocr import NoOcr, PageOcr, TesseractOcr
 from app.ingestion.validation import validate_file
 from app.protocols import (
@@ -149,6 +156,18 @@ def _title_from_file_name(name: str) -> str:
     """'ID-05__nadra-registration-policy-6-0-2-en.pdf' → 'nadra registration policy 6 0 2 en'."""
     stem = re.sub(r"^[A-Z]{2}-\d{2}[a-z]?__", "", PurePath(name).stem)
     return " ".join(re.sub(r"[_\-]+", " ", stem).split()) or PurePath(name).stem
+
+
+def _checked_public_topic(topic: str) -> str:
+    """The normalised topic of a public Document; anything outside the closed Topic list is a 422."""
+    slug = normalize_topic(topic)
+    if slug not in TOPICS:
+        raise AppError(
+            ErrorCode.VALIDATION_FAILED,
+            f"Unknown topic. Allowed topics: {', '.join(TOPICS)}.",
+            extra={"field": "topic", "allowed": list(TOPICS)},
+        )
+    return slug
 
 
 def _safe_file_name(name: str) -> str:
@@ -571,6 +590,8 @@ class IngestionService:
         doc_type: str | None = None,
     ) -> tuple[DocumentOut, bool]:
         owner = ctx.write_owner_for(Visibility(visibility))
+        if owner == ctx.public_owner_id and metadata.topic:
+            metadata = metadata.model_copy(update={"topic": _checked_public_topic(metadata.topic)})
         file_name = _safe_file_name(file.file_name)
         await self._check_quota(ctx, owner, file.size_bytes)
         async with self._job_slot(ctx, owner):
@@ -715,6 +736,8 @@ class IngestionService:
             ctx.ensure_writable(row.user_id)
             if row.status == DocumentStatus.DELETING.value:
                 raise AppError(ErrorCode.NOT_FOUND, "Document not found.")
+            if row.visibility == Visibility.PUBLIC.value and changes.get("topic") is not None:
+                changes["topic"] = _checked_public_topic(changes["topic"])
             payload = {k: changes[k] for k in _PATCHABLE_PAYLOAD if k in changes}
             if payload and row.chunk_count:
                 try:

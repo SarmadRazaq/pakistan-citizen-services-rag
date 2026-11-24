@@ -96,6 +96,11 @@ _TOPICS: tuple[tuple[str, str], ...] = (
 TOPICS: tuple[str, ...] = tuple(t for t, _ in _TOPICS)  # the closed Topic list (GLOSSARY.md "Topic")
 
 
+def normalize_topic(value: str) -> str:
+    """Slug form of a topic: trimmed, case-folded, runs of whitespace/hyphens joined by one `_`."""
+    return re.sub(r"[\s\-]+", "_", value.strip().casefold())
+
+
 def _alias_pattern(alias: str) -> re.Pattern[str]:
     escaped = re.escape(alias)
     if alias.isascii():

@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 import { api } from "@/lib/client";
 import { JURISDICTION_LABEL } from "@/lib/labels";
 import { ApiError } from "@/lib/problem";
+import { TOPIC_OPTIONS } from "@/lib/topics";
 import type { DocumentMetadata, DocumentOut, Jurisdiction } from "@/lib/types";
 
 import { Dialog } from "../Dialog";
@@ -71,6 +72,7 @@ export function EditDialog({
     { key: "topic", label: "Topic", max: 60 },
     { key: "effective_date", label: "Effective date", type: "date" },
   ];
+  const topicIsSelect = doc?.visibility === "public";
 
   return (
     <Dialog
@@ -101,17 +103,38 @@ export function EditDialog({
               <label htmlFor={`${id}-${f.key}`} className="text-xs font-medium text-muted">
                 {f.label}
               </label>
-              <input
-                id={`${id}-${f.key}`}
-                type={f.type ?? "text"}
-                dir="auto"
-                maxLength={f.max}
-                value={form[f.key]}
-                onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
-                aria-invalid={!!fieldErrors[f.key] || undefined}
-                aria-describedby={fieldErrors[f.key] ? `${id}-${f.key}-err` : undefined}
-                className={input}
-              />
+              {f.key === "topic" && topicIsSelect ? (
+                <select
+                  id={`${id}-${f.key}`}
+                  value={form.topic}
+                  onChange={(e) => setForm({ ...form, topic: e.target.value })}
+                  aria-invalid={!!fieldErrors[f.key] || undefined}
+                  aria-describedby={fieldErrors[f.key] ? `${id}-${f.key}-err` : undefined}
+                  className={input}
+                >
+                  <option value="">None</option>
+                  {form.topic && !TOPIC_OPTIONS.some((o) => o.value === form.topic) && (
+                    <option value={form.topic}>{form.topic}</option>
+                  )}
+                  {TOPIC_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  id={`${id}-${f.key}`}
+                  type={f.type ?? "text"}
+                  dir="auto"
+                  maxLength={f.max}
+                  value={form[f.key]}
+                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+                  aria-invalid={!!fieldErrors[f.key] || undefined}
+                  aria-describedby={fieldErrors[f.key] ? `${id}-${f.key}-err` : undefined}
+                  className={input}
+                />
+              )}
               {fieldErrors[f.key] && (
                 <p id={`${id}-${f.key}-err`} className="text-xs text-bad">
                   {fieldErrors[f.key]}

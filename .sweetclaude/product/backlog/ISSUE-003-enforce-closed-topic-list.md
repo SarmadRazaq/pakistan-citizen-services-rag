@@ -2,7 +2,7 @@
 id: ISSUE-003
 title: 'Enforce the closed Topic list for public Documents'
 type: tech-debt
-status: new
+status: done
 created: '2026-11-24T00:00:00+00:00'
 updated: '2026-11-24T00:00:00+00:00'
 priority: P3

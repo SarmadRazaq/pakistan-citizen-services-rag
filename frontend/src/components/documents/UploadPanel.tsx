@@ -8,6 +8,7 @@ import { COMING_SOON_EXTENSIONS, MAX_UPLOAD_MB, SUPPORTED_EXTENSIONS } from "@/l
 import { JURISDICTION_LABEL, STATUS_LABEL } from "@/lib/labels";
 import { ApiError, isDuplicate, toProblem } from "@/lib/problem";
 import { formatBytes } from "@/lib/text";
+import { TOPIC_OPTIONS } from "@/lib/topics";
 import type { DocumentOut, Jurisdiction } from "@/lib/types";
 
 import { useToast } from "../Toast";
@@ -271,14 +272,30 @@ export function UploadPanel({
             <label htmlFor={ids.topic} className="text-xs font-medium text-muted">
               Topic
             </label>
-            <input
-              id={ids.topic}
-              value={meta.topic}
-              maxLength={60}
-              onChange={(e) => setMeta({ ...meta, topic: e.target.value })}
-              placeholder="e.g. passport"
-              className="rounded-md border border-border bg-bg px-2 py-1 text-fg"
-            />
+            {isAdmin && official ? (
+              <select
+                id={ids.topic}
+                value={meta.topic}
+                onChange={(e) => setMeta({ ...meta, topic: e.target.value })}
+                className="rounded-md border border-border bg-bg px-2 py-1 text-fg"
+              >
+                <option value="">Detect automatically</option>
+                {TOPIC_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id={ids.topic}
+                value={meta.topic}
+                maxLength={60}
+                onChange={(e) => setMeta({ ...meta, topic: e.target.value })}
+                placeholder="e.g. passport"
+                className="rounded-md border border-border bg-bg px-2 py-1 text-fg"
+              />
+            )}
           </div>
           <div className="flex flex-col gap-1">
             <label htmlFor={ids.date} className="text-xs font-medium text-muted">
