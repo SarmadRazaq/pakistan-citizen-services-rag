@@ -4,6 +4,11 @@
 #   - Every entry is checked by the student against its source_url before `verified: true` is set.
 #   - The app shows ONLY entries with verified: true. Unverified entries are ignored at load time.
 #   - The model never invents contacts; it can only pick an entry from this file by topic/jurisdiction.
+#   - `topics` come from the closed Topic list (GLOSSARY.md "Topic"): identity, passport, tax, health,
+#     social_protection, consumer_protection, driving_licence, complaints, rights. Unknown topics are
+#     ignored at load time.
+#   - `triggers` are Referral triggers found in the question itself, not in a Document: emergency,
+#     legal_advice. A legal_advice entry is the fallback when no topic entry matches.
 #   - Contacts here are public organisational lines, never personal numbers.
 #
 # Status: DRAFT (22 Nov 2026). Values marked "from source check" were seen on the official page
@@ -12,7 +17,7 @@
 version: 1
 entries:
   - id: mohtasib_federal
-    topics: [complaints, rights, maladministration]
+    topics: [complaints]
     jurisdiction: federal
     name: "Wafaqi Mohtasib (Federal Ombudsman) Secretariat"
     contact: "1055"   # from source check: the 'Download Complaint Form' page
@@ -20,7 +25,8 @@ entries:
     verified: false
 
   - id: mohr_helpline
-    topics: [rights, legal_advice, advice_referral]
+    topics: [rights]
+    triggers: [legal_advice]
     jurisdiction: federal
     name: "Ministry of Human Rights — free legal advice helpline"
     contact: "1099"   # from source check; the site shows conflicting operating hours
@@ -28,7 +34,7 @@ entries:
     verified: false
 
   - id: nadra_helpline
-    topics: [identity, cnic, crc, frc]
+    topics: [identity]
     jurisdiction: federal
     name: "NADRA helpline"
     contact: ""       # TODO: copy from nadra.gov.pk contact page
@@ -52,7 +58,7 @@ entries:
     verified: false
 
   - id: punjab_consumer
-    topics: [consumer]
+    topics: [consumer_protection]
     jurisdiction: punjab
     name: "Directorate of Consumer Protection Council, Punjab"
     contact: ""       # TODO: copy from consumerservice.punjab.gov.pk
@@ -60,7 +66,7 @@ entries:
     verified: false
 
   - id: emergency_police
-    topics: [emergency]
+    triggers: [emergency]
     jurisdiction: federal
     name: "Police emergency"
     contact: "15"     # TODO: verify on an official page before enabling
@@ -68,7 +74,7 @@ entries:
     verified: false
 
   - id: emergency_rescue
-    topics: [emergency]
+    triggers: [emergency]
     jurisdiction: federal
     name: "Rescue / ambulance"
     contact: "1122"   # TODO: verify coverage per province on an official page before enabling

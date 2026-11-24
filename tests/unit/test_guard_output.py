@@ -264,7 +264,7 @@ def test_referrals_only_verified_and_matched_by_topic_and_place() -> None:
                 },
                 {
                     "id": "b",
-                    "topics": ["consumer"],
+                    "topics": ["consumer_protection"],
                     "jurisdiction": "punjab",
                     "name": "PCPC",
                     "contact": "080",
@@ -272,7 +272,8 @@ def test_referrals_only_verified_and_matched_by_topic_and_place() -> None:
                 },
                 {
                     "id": "c",
-                    "topics": ["advice_referral"],
+                    "topics": ["rights"],
+                    "triggers": ["legal_advice"],
                     "jurisdiction": "federal",
                     "name": "MoHR",
                     "contact": "1099",
@@ -299,10 +300,67 @@ def test_referrals_only_verified_and_matched_by_topic_and_place() -> None:
     )
     assert [r.id for r in refs] == ["a", "b", "c"]
     assert [r.id for r in match_referrals(refs, topics={"passport"}, jurisdictions=set())] == ["a"]
-    assert [r.id for r in match_referrals(refs, topics={"consumer"}, jurisdictions={"sindh"})] == ["c"]
-    assert [r.id for r in match_referrals(refs, topics={"consumer"}, jurisdictions={"punjab"})] == ["b"]
+    assert [r.id for r in match_referrals(refs, topics={"consumer_protection"}, jurisdictions={"sindh"})] == [
+        "c"
+    ]
+    assert [
+        r.id for r in match_referrals(refs, topics={"consumer_protection"}, jurisdictions={"punjab"})
+    ] == ["b"]
     assert match_referrals(refs[:2], topics={"tax"}, jurisdictions=set()) == []
     assert parse_referrals("not a mapping") == ()
+
+
+def test_referrals_use_closed_topics_and_triggers() -> None:
+    refs = parse_referrals(
+        {
+            "entries": [
+                {
+                    "id": "n",
+                    "topics": ["identity", "cnic"],
+                    "jurisdiction": "federal",
+                    "name": "NADRA",
+                    "contact": "1",
+                    "verified": True,
+                },
+                {
+                    "id": "e",
+                    "triggers": ["emergency"],
+                    "jurisdiction": "federal",
+                    "name": "Police",
+                    "contact": "15",
+                    "verified": True,
+                },
+                {
+                    "id": "l",
+                    "topics": ["rights"],
+                    "triggers": ["legal_advice"],
+                    "jurisdiction": "federal",
+                    "name": "MoHR",
+                    "contact": "1099",
+                    "verified": True,
+                },
+            ]
+        }
+    )
+    assert refs[0].topics == frozenset({"identity"})  # `cnic` is not a Topic: dropped
+    assert refs[1].topics == frozenset() and refs[1].triggers == frozenset({"emergency"})
+    assert [r.id for r in match_referrals(refs, topics={"identity"}, jurisdictions=set())] == ["n"]
+    # no topic match: the legal_advice fallback, never the emergency line
+    assert [r.id for r in match_referrals(refs, topics={"tax"}, jurisdictions=set())] == ["l"]
+
+
+def test_shipped_referrals_file_uses_only_known_names() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    from app.guardrails.advice import TRIGGERS
+    from app.ingestion.metadata import TOPICS
+
+    data = yaml.safe_load(Path("app/guardrails/referrals.yaml").read_text(encoding="utf-8"))
+    for entry in data["entries"]:
+        assert set(entry.get("topics") or []) <= set(TOPICS), entry["id"]
+        assert set(entry.get("triggers") or []) <= TRIGGERS, entry["id"]
 
 
 def test_dated_notices() -> None:

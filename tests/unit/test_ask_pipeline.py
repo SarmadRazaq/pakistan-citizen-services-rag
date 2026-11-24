@@ -319,7 +319,8 @@ REFERRALS_YAML = {
     "entries": [
         {
             "id": "mohr",
-            "topics": ["legal_advice", "advice_referral"],
+            "topics": ["rights"],
+            "triggers": ["legal_advice"],
             "jurisdiction": "federal",
             "name": "Ministry of Human Rights helpline",
             "contact": "1099",

@@ -93,6 +93,7 @@ _TOPICS: tuple[tuple[str, str], ...] = (
     ("rights", r"constitution|fundamental\s+rights|human\s+rights|آئین"),
     ("social_protection", r"\bbisp\b|kafaalat|benazir"),
 )
+TOPICS: tuple[str, ...] = tuple(t for t, _ in _TOPICS)  # the closed Topic list (GLOSSARY.md "Topic")
 
 
 def _alias_pattern(alias: str) -> re.Pattern[str]:
