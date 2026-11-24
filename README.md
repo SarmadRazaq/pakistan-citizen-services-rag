@@ -42,6 +42,8 @@ copy .env.example .env         # then set JWT_SECRET and NVIDIA_API_KEY (never c
 
 On Linux/macOS the same targets exist in the `Makefile` (`make install`, `make check`, …).
 
+Production deployment: see [docs/DEPLOY.md](docs/DEPLOY.md).
+
 `GET /health/ready` reports each dependency. It returns **503** until Qdrant is up and the NVIDIA key works. Ollama is optional unless `OLLAMA_REQUIRED=true`.
 
 ## Repository rules

@@ -314,8 +314,9 @@ async def test_get_tenant_without_auth_service_is_401(make_app: Callable[..., Fa
 def test_prod_refuses_the_default_jwt_secret() -> None:
     db = Database("sqlite+aiosqlite:///:memory:")
     with pytest.raises(RuntimeError, match="JWT_SECRET"):
-        AuthService(Settings(_env_file=None, app_env="prod"), db)  # type: ignore[call-arg]
-    AuthService(auth_settings(app_env="prod"), db)  # a real secret is fine
+        # model_construct skips Settings' own prod validation, so this exercises AuthService's guard.
+        AuthService(Settings.model_construct(app_env="prod"), db)
+    AuthService(auth_settings(app_env="prod", nvidia_api_key="nvapi-test"), db)  # a real secret is fine
 
 
 # ---------------------------------------------------------------- account deletion (E41)

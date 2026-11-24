@@ -21,6 +21,38 @@ def new_request_id() -> str:
     return uuid.uuid4().hex
 
 
+SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"cross-origin-opener-policy", b"same-origin"),
+)
+HSTS_HEADER = (b"strict-transport-security", b"max-age=63072000; includeSubDomains")
+
+
+class SecurityHeadersMiddleware:
+    """Add the baseline security headers to every response, without overriding a route's own."""
+
+    def __init__(self, app: ASGIApp, *, hsts: bool = False) -> None:
+        self.app = app
+        self._headers = SECURITY_HEADERS + ((HSTS_HEADER,) if hsts else ())
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                present = {name.lower() for name, _ in headers}
+                headers.extend(h for h in self._headers if h[0] not in present)
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 class RequestContextMiddleware:
     """Echo a well-formed client X-Request-ID (or create one), time the request, log one access line."""
 

@@ -21,7 +21,7 @@ from app.core.auth_service import AuthService
 from app.core.errors import install_error_handlers
 from app.core.health import HealthService, default_probes
 from app.core.logging import configure_logging
-from app.core.middleware import RequestContextMiddleware
+from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.ratelimit import install_rate_limits
 from app.db.session import Database
 
@@ -135,6 +135,7 @@ def create_app(
         expose_headers=["X-Request-ID", "Location", "Retry-After"],
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.app_env == "prod")  # outermost
     if wire:
         install_rate_limits(app, settings)
 

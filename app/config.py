@@ -18,6 +18,8 @@ ResponseCacheMode = Literal["off", "eval_only"]
 Device = Literal["auto", "cuda", "cpu"]
 Provider = Literal["nvidia", "local"]
 InjectionProvider = Literal["nvidia", "none"]
+DEFAULT_JWT_SECRET = "change-me-in-.env"  # noqa: S105 - the placeholder, rejected in prod
+MIN_JWT_SECRET_CHARS = 32
 CsvList = Annotated[list[str], NoDecode]  # "a,b,c" in env, not JSON
 
 
@@ -29,7 +31,9 @@ def _split_csv(value: object) -> object:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+    )
 
     # --- App ---
     app_env: Literal["dev", "test", "prod"] = "dev"
@@ -138,7 +142,7 @@ class Settings(BaseSettings):
     text_quality_min_dict_hit: float = 0.15  # measured: real EN table page 0.25, scrambled Urdu 0.01-0.03
 
     # --- Auth / observability ---
-    jwt_secret: SecretStr = SecretStr("change-me-in-.env")
+    jwt_secret: SecretStr = SecretStr(DEFAULT_JWT_SECRET)
     jwt_ttl_min: int = 30
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
@@ -160,6 +164,29 @@ class Settings(BaseSettings):
     def _local_only_needs_local_model(self) -> Settings:
         if self.private_context_policy == "local_only" and not self.local_fallback_enabled:
             raise ValueError("PRIVATE_CONTEXT_POLICY=local_only requires LOCAL_FALLBACK_ENABLED=true")
+        return self
+
+    @model_validator(mode="after")
+    def _production_checks(self) -> Settings:
+        """Refuse to start in prod with insecure defaults. Lists every problem; never echoes a secret."""
+        if self.app_env != "prod":
+            return self
+        problems: list[str] = []
+        secret = self.jwt_secret.get_secret_value()
+        if secret == DEFAULT_JWT_SECRET:
+            problems.append("JWT_SECRET is still the default value")
+        elif len(secret) < MIN_JWT_SECRET_CHARS:
+            problems.append(f"JWT_SECRET must be at least {MIN_JWT_SECRET_CHARS} characters")
+        if self.nvidia_api_key is None or not self.nvidia_api_key.get_secret_value().strip():
+            problems.append("NVIDIA_API_KEY must be set")
+        if not self.cors_origins:
+            problems.append("CORS_ORIGINS must not be empty")
+        elif "*" in self.cors_origins:
+            problems.append("CORS_ORIGINS must not contain '*'")
+        if self.log_question_text:
+            problems.append("LOG_QUESTION_TEXT must be false")
+        if problems:
+            raise ValueError("Invalid production configuration: " + "; ".join(problems))
         return self
 
     @property
