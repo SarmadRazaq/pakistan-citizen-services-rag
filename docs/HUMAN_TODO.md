@@ -2,6 +2,17 @@
 
 These are the human prerequisites from the feedback (items 2–5). Work through them in one sitting; most take minutes. Tick them here so the build can rely on them.
 
+## Hosted models: first run (added 25 Nov)
+
+All models except Tesseract OCR now run on NVIDIA's hosted APIs; nothing has been called with a real key yet.
+
+| ✓ | Task | How |
+|---|---|---|
+| ☐ | **Probe every hosted model** | After the key is in `.env`: `.venv\Scripts\python scripts\check_models.py --probe`. It now also checks `HOSTED_EMBEDDING_MODEL` (baai/bge-m3) and `HOSTED_RERANKER_MODEL`. Replace any id it reports missing. |
+| ☐ | **Re-index the Official corpus** | Sparse vectors changed (built-in lexical encoder instead of BGE-M3's), so drop the old collection and re-run `scripts\seed_corpus.py`. |
+| ☐ | **Retune `TAU_REFUSE`** | 0.3 was set for the local reranker. Run the eval once and pick the threshold from the hosted reranker's scores. |
+| ☐ | **Start the stack in Docker** | Start Docker Desktop, then follow `docs/DEPLOY.md` (`docker compose --profile api up -d --build`). The images have not been built yet. |
+
 ## Today, before ingestion (blocks the MVP)
 
 | ✓ | Task | How | Why |

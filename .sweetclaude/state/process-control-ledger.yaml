@@ -1,7 +1,7 @@
 workflow: code-issue
 story_id: HOSTED-MODELS
 github_issue: null
-current_step: implement-tdd
+current_step: complete
 rigor: small
 success_criteria_contract: null
 subagent_budget:
