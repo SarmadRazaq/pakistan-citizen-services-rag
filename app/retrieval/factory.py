@@ -1,4 +1,8 @@
-"""Wiring for the retrieval stack: one GPU worker, BGE-M3, the Qdrant store, the reranker, the retriever.
+"""Wiring for the retrieval stack: embedder, Qdrant store, reranker and retriever.
+
+The embedder and reranker are hosted on the NVIDIA API catalog by default (`EMBEDDING_PROVIDER` /
+`RERANKER_PROVIDER` = nvidia) and run locally (BGE-M3, bge-reranker-v2-m3 on the shared GPU worker)
+when set to `local`; the two providers are chosen independently.
 
     bundle = build_retrieval(settings)
     await bundle.startup(warmup=True)   # in the FastAPI lifespan
@@ -6,21 +10,25 @@
     await bundle.shutdown()
 
 Building the bundle never loads model weights or opens a network connection; `startup()` creates the
-collection and alias if missing, and `warmup=True` loads both models with one tiny forward pass each.
+collection and alias if missing, and `warmup=True` loads local models with one tiny forward pass each
+(hosted models need no warm-up). `shutdown()` closes the hosted HTTP clients.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
 from app.config import Settings
 from app.core.device import empty_cuda_cache, log_device
 from app.core.health import Probe
+from app.protocols import Embedder, Reranker
 from app.retrieval.embedder import BGEM3Embedder
 from app.retrieval.gpu import GpuWorker
+from app.retrieval.hosted import NvidiaEmbedder, NvidiaReranker
 from app.retrieval.reranker import BGEReranker
 from app.retrieval.retriever import HybridRetriever
 from app.retrieval.vector_store import TenantScopedVectorStore
@@ -30,9 +38,9 @@ log = structlog.get_logger(__name__)
 
 @dataclass
 class RetrievalBundle:
-    embedder: BGEM3Embedder
+    embedder: Embedder
     store: TenantScopedVectorStore
-    reranker: BGEReranker
+    reranker: Reranker
     retriever: HybridRetriever
     worker: GpuWorker
     settings: Settings
@@ -41,14 +49,18 @@ class RetrievalBundle:
         await self.store.ensure_collection()
         if warmup:
             log_device(self.settings.device)
-            await self.embedder.warmup()
-            await self.reranker.warmup()
+            await self.embedder.warmup()  # type: ignore[attr-defined]
+            await self.reranker.warmup()  # type: ignore[attr-defined]
             log.info("retrieval.warmed_up")
 
     async def shutdown(self) -> None:
         await self.store.close()
-        self.embedder.unload()
-        self.reranker.unload()
+        models: tuple[Any, ...] = (self.embedder, self.reranker)
+        for model in models:
+            model.unload()
+            aclose = getattr(model, "aclose", None)
+            if aclose is not None:
+                await aclose()
         self.worker.shutdown()
         empty_cuda_cache()
 
@@ -69,11 +81,17 @@ def build_retrieval(
     embedding_cache_dir: Path | None = None,
 ) -> RetrievalBundle:
     worker = GpuWorker(settings.gpu_max_concurrent)
-    embedder = BGEM3Embedder(settings, worker, cache_dir=embedding_cache_dir)
+    embedder: Embedder = (
+        NvidiaEmbedder(settings)
+        if settings.embedding_provider == "nvidia"
+        else BGEM3Embedder(settings, worker, cache_dir=embedding_cache_dir)
+    )
     store = TenantScopedVectorStore.from_settings(
         settings, dense_dim=embedder.dimension, location=qdrant_location
     )
-    reranker = BGEReranker(settings, worker)
+    reranker: Reranker = (
+        NvidiaReranker(settings) if settings.reranker_provider == "nvidia" else BGEReranker(settings, worker)
+    )
     retriever = HybridRetriever(settings, embedder, store, reranker)
     return RetrievalBundle(
         embedder=embedder,

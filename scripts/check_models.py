@@ -6,6 +6,8 @@ Usage:  .venv\\Scripts\\python scripts\\check_models.py [--probe]
 - Reports which of GENERATION_MODELS / HELPER_MODEL / JUDGE_MODEL are missing.
 - With --probe, sends one tiny JSON-mode request per configured model and reports
   latency, whether JSON mode was accepted, and whether the reply parsed as JSON.
+- Reports whether the hosted embedding and reranking models (HOSTED_EMBEDDING_MODEL,
+  HOSTED_RERANKER_MODEL) are visible to the key and reachable.
 - Writes the result to evals/configs/models_available.json (no key inside), so the
   evaluation records exactly which models existed on the day it ran.
 """
@@ -62,6 +64,47 @@ def _probe(client: httpx.Client, base: str, model: str) -> dict[str, object]:
     return {"ok": True, "latency_ms": latency, "json_mode": json_mode, "json_parsed": parsed}
 
 
+def _check_retrieval(
+    client: httpx.Client, settings: Settings, available: list[str]
+) -> dict[str, dict[str, object]]:
+    """Visibility (GET /models) and reachability (one tiny request) of the hosted retrieval models."""
+    out: dict[str, dict[str, object]] = {}
+    embed = {
+        "model": settings.hosted_embedding_model,
+        "input": ["passport"],
+        "input_type": "query",
+        "encoding_format": "float",
+        "truncate": "END",
+    }
+    rerank = {
+        "model": settings.hosted_reranker_model,
+        "query": {"text": "passport fee"},
+        "passages": [{"text": "The passport fee is listed on the office page."}],
+        "truncate": "END",
+    }
+    requests = {
+        "embedding": (
+            settings.hosted_embedding_model,
+            f"{settings.nvidia_base_url.rstrip('/')}/embeddings",
+            embed,
+        ),
+        "reranker": (settings.hosted_reranker_model, settings.reranker_url, rerank),
+    }
+    for role, (model, url, body) in requests.items():
+        entry: dict[str, object] = {"role": role, "available": model in available}
+        started = time.perf_counter()
+        try:
+            r = client.post(url, json=body)
+            entry["reachable"] = r.status_code == 200
+            entry["status"] = r.status_code
+        except httpx.HTTPError as exc:
+            entry["reachable"] = False
+            entry["status"] = type(exc).__name__
+        entry["latency_ms"] = round((time.perf_counter() - started) * 1000)
+        out[model] = entry
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", action="store_true", help="send one tiny request per configured model")
@@ -100,7 +143,9 @@ def main() -> int:
                 if args.probe and model in available:
                     entry["probe"] = _probe(client, base, model)
                 configured[model] = entry
+        retrieval = _check_retrieval(client, settings, available)
         report["configured"] = configured
+        report["retrieval"] = retrieval
         report["available"] = available
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +156,13 @@ def main() -> int:
         mark = "OK " if entry["available"] else "MISSING"
         extra = f"  probe={entry['probe']}" if "probe" in entry else ""
         print(f"  [{mark}] {entry['role']:<10} {model}{extra}")
+    print("Hosted retrieval models:")
+    for model, entry in retrieval.items():
+        seen = "listed" if entry["available"] else "not listed"
+        mark = "OK " if entry["reachable"] else "FAIL"
+        print(f"  [{mark}] {entry['role']:<10} {model}  ({seen}, status={entry['status']})")
     missing = [m for m, e in configured.items() if not e["available"]]
+    missing += [m for m, e in retrieval.items() if not e["reachable"]]
     if missing:
         print("\nPick replacements from evals/configs/models_available.json and set them in .env.")
     print(f"\nWrote {OUT}")

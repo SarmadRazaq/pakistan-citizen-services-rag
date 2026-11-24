@@ -10,12 +10,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PrivateContextPolicy = Literal["hosted_with_notice", "local_only"]
 ResponseCacheMode = Literal["off", "eval_only"]
 Device = Literal["auto", "cuda", "cpu"]
+Provider = Literal["nvidia", "local"]
+InjectionProvider = Literal["nvidia", "none"]
 CsvList = Annotated[list[str], NoDecode]  # "a,b,c" in env, not JSON
 
 
@@ -65,8 +67,23 @@ class Settings(BaseSettings):
     private_context_policy: PrivateContextPolicy = "hosted_with_notice"
     llm_cache_dir: Path = Path("evals/.cache/llm")  # eval response cache (RESPONSE_CACHE=eval_only)
 
-    # --- Local models ---
-    embedding_model: str = "BAAI/bge-m3"
+    # --- Hosted retrieval models (default; NVIDIA API catalog, same NVIDIA_API_KEY) ---
+    embedding_provider: Provider = "nvidia"
+    hosted_embedding_model: str = "baai/bge-m3"
+    embedding_dimension: int = 1024
+    reranker_provider: Provider = "nvidia"
+    hosted_reranker_model: str = "nvidia/llama-3.2-nv-rerankqa-1b-v2"
+    hosted_reranker_url: str | None = None  # default derived from nvidia_retrieval_base_url + model
+    nvidia_retrieval_base_url: str = "https://ai.api.nvidia.com/v1/retrieval"
+    injection_provider: InjectionProvider = "nvidia"
+    jailbreak_detect_url: str = "https://ai.api.nvidia.com/v1/security/nvidia/nemoguard-jailbreak-detect"
+    hosted_retrieval_timeout_s: float = 20.0
+    # Ollama answers when every hosted model failed (degraded=True). Off by default; required by
+    # private_context_policy=local_only.
+    local_fallback_enabled: bool = False
+
+    # --- Local models (optional: EMBEDDING_PROVIDER / RERANKER_PROVIDER = local, or the tokenizer) ---
+    embedding_model: str = "BAAI/bge-m3"  # also the tokenizer that sizes Chunks
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     injection_model: str = "meta-llama/Llama-Prompt-Guard-2-86M"
     embed_batch_size: int = 32
@@ -138,6 +155,20 @@ class Settings(BaseSettings):
     health_probe_timeout_s: float = 2.0
 
     _split = field_validator("cors_origins", "generation_models", "jurisdictions", mode="before")(_split_csv)
+
+    @model_validator(mode="after")
+    def _local_only_needs_local_model(self) -> Settings:
+        if self.private_context_policy == "local_only" and not self.local_fallback_enabled:
+            raise ValueError("PRIVATE_CONTEXT_POLICY=local_only requires LOCAL_FALLBACK_ENABLED=true")
+        return self
+
+    @property
+    def reranker_url(self) -> str:
+        """Reranking endpoint: HOSTED_RERANKER_URL, else derived from the retrieval base URL and model."""
+        if self.hosted_reranker_url:
+            return self.hosted_reranker_url
+        model = self.hosted_reranker_model.replace(".", "_")
+        return f"{self.nvidia_retrieval_base_url.rstrip('/')}/{model}/reranking"
 
     @property
     def max_upload_bytes(self) -> int:

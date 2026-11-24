@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.config import Settings
-    from app.retrieval.embedder import BGEM3Embedder
+    from app.protocols import Embedder
     from app.retrieval.vector_store import TenantScopedVectorStore
 
 
-def build_ingest_components(settings: Settings) -> tuple[TenantScopedVectorStore, BGEM3Embedder]:
+def build_ingest_components(settings: Settings) -> tuple[TenantScopedVectorStore, Embedder]:
     """(store, embedder) for offline seeding. The caller awaits `store.ensure_collection()`."""
     from app.retrieval.factory import build_retrieval
 

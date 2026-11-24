@@ -92,6 +92,7 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
         helper_model="helper-h",
         judge_model="judge-j",
         local_fallback_model=LOCAL,
+        local_fallback_enabled=True,  # these tests exercise the full chain, Ollama included
         llm_max_rpm=6000,
         llm_cache_dir=tmp_path / "llm-cache",
     )

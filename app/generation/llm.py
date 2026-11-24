@@ -1,4 +1,4 @@
-"""`LLMRouter`: the NVIDIA API catalog model chain with an Ollama fallback (blueprint §3.7, §12.2, E14/E15).
+"""`LLMRouter`: the NVIDIA API catalog model chain, optional Ollama fallback (blueprint §3.7, §12.2, E14/E15).
 
 Transport choice: the router calls the OpenAI-compatible `POST /chat/completions` directly with
 `httpx.AsyncClient` instead of going through LangChain's `ChatOpenAI`. Raw httpx gives exact control
@@ -14,8 +14,9 @@ Per call, for each model of the chain in order:
   succeeds the model is remembered as non-JSON-mode;
 - a timeout, transport error or any other 4xx moves on to the next model (a 401 skips every
   hosted model, since the key itself is bad).
-Then the local Ollama model answers with `degraded=True` (`generate` and `helper` only). When the
-whole chain is exhausted the router raises `AppError(LLM_UNAVAILABLE)` with `Retry-After`.
+Hosted models fall back across `GENERATION_MODELS`. Only when `LOCAL_FALLBACK_ENABLED=true` (off by
+default) does the local Ollama model then answer with `degraded=True` (`generate` and `helper` only).
+When the whole chain is exhausted the router raises `AppError(LLM_UNAVAILABLE)` with `Retry-After`.
 
 Logging: model, endpoint, status, latency and attempt number only. The API key, the prompts and
 the answer text are never logged.
@@ -120,7 +121,8 @@ class LLMRouter:
     """Implements `LLMClient`.
 
     Chains per purpose: `generate` = GENERATION_MODELS; `helper` = HELPER_MODEL + GENERATION_MODELS;
-    `judge` = JUDGE_MODEL. `generate` and `helper` then fall back to Ollama (`degraded=True`). With no
+    `judge` = JUDGE_MODEL. `generate` and `helper` then fall back to Ollama (`degraded=True`) only when
+    `LOCAL_FALLBACK_ENABLED`. With no
     NVIDIA_API_KEY the hosted models are skipped. `local_only=True` builds a router that uses only
     Ollama (for `PRIVATE_CONTEXT_POLICY=local_only` answers over private chunks).
 
@@ -182,7 +184,7 @@ class LLMRouter:
             }[purpose]
             hosted = _dedupe(names)
         targets = [_Target("nvidia", m) for m in hosted]
-        if purpose != "judge":
+        if purpose != "judge" and self._settings.local_fallback_enabled:
             targets.append(local)
         return targets
 
@@ -474,9 +476,9 @@ def build_llm_clients(
 ) -> tuple[LLMRouter, LLMRouter]:
     """Return (hosted, local_only).
 
-    `hosted` is the full NVIDIA chain → Ollama. `local_only` uses only Ollama; the ask pipeline uses
-    it when `PRIVATE_CONTEXT_POLICY=local_only` and private chunks are in the context. The serving
-    app passes `eval_cache=False` (the default); only the eval runner may pass True.
+    `hosted` is the full NVIDIA chain (→ Ollama when LOCAL_FALLBACK_ENABLED). `local_only` uses only
+    Ollama; the ask pipeline uses it when `PRIVATE_CONTEXT_POLICY=local_only` and private chunks are in
+    the context. The serving app passes `eval_cache=False` (the default); only the eval runner may pass True.
     """
     hosted = LLMRouter(settings, cache=eval_cache, client=client)
     local_only = LLMRouter(settings, local_only=True, cache=eval_cache, client=client)
