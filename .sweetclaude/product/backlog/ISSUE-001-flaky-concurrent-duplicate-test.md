@@ -2,7 +2,7 @@
 id: ISSUE-001
 title: 'Flaky test: test_concurrent_duplicate_uploads'
 type: bug-fix
-status: new
+status: done
 created: '2026-11-24T00:00:00+00:00'
 updated: '2026-11-24T00:00:00+00:00'
 priority: P2
