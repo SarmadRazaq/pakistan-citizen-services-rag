@@ -381,7 +381,7 @@ def build_graph(deps: PipelineDeps) -> Any:
             "answerable": True,
             "citations": citations,
             "unanswered_parts": list(check.unanswered_parts),
-            "refusal_reason": RefusalReason.PARTIAL if check.unanswered_parts else None,
+            "refusal_reason": None,
             "notices": notices,
             "guard_output": state.get("guard_output", "passed"),
         }

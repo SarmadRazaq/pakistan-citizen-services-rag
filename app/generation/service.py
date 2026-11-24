@@ -52,6 +52,7 @@ from app.schemas import (
     Jurisdiction,
     LanguageCode,
     LanguageInfo,
+    Outcome,
     ProviderInfo,
     RetrievalInfo,
     RetrievedChunk,
@@ -70,6 +71,17 @@ def _enum_or_none[E: (Jurisdiction, LanguageCode)](enum: type[E], value: str | N
         return enum(value)
     except ValueError:
         return None
+
+
+def outcome_for(*, answerable: bool, degraded: bool, unanswered_parts: list[str]) -> Outcome:
+    """GLOSSARY.md "Outcomes": a refusal wins, then degraded, then partial."""
+    if not answerable:
+        return Outcome.REFUSAL
+    if degraded:
+        return Outcome.DEGRADED_ANSWER
+    if unanswered_parts:
+        return Outcome.PARTIAL_ANSWER
+    return Outcome.ANSWER
 
 
 def _scope(ctx: TenantContext, owner_id: str) -> Visibility:
@@ -318,12 +330,15 @@ class RagAskService:
             threshold=self.settings.tau_refuse,
             chunks=retrieved_chunks(ctx, result, cited_ids),
         )
+        answerable = bool(state.get("answerable", False))
+        unanswered_parts = state.get("unanswered_parts", [])
         return AskResponse(
             request_id=request_id,
             answer=state.get("answer", ""),
-            answerable=bool(state.get("answerable", False)),
-            refusal_reason=state.get("refusal_reason"),
-            unanswered_parts=state.get("unanswered_parts", []),
+            answerable=answerable,
+            outcome=outcome_for(answerable=answerable, degraded=degraded, unanswered_parts=unanswered_parts),
+            refusal_reason=state.get("refusal_reason") if not answerable else None,
+            unanswered_parts=unanswered_parts,
             degraded=degraded,
             notices=notices,
             language=LanguageInfo(question=question_language, answer=answer_language),

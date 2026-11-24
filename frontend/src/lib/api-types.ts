@@ -261,6 +261,7 @@ export interface components {
             answer: string;
             /** Answerable */
             answerable: boolean;
+            outcome: components["schemas"]["Outcome"];
             refusal_reason?: components["schemas"]["RefusalReason"] | null;
             /** Unanswered Parts */
             unanswered_parts?: string[];
@@ -680,6 +681,12 @@ export interface components {
          * @enum {string}
          */
         NoticeCode: "not_advice" | "referral" | "dated_information" | "emergency" | "third_party_processing";
+        /**
+         * Outcome
+         * @description What kind of reply /ask gave (GLOSSARY.md "Outcomes"). Only `refusal` carries a RefusalReason.
+         * @enum {string}
+         */
+        Outcome: "answer" | "partial_answer" | "degraded_answer" | "refusal";
         /** Page[ChunkOut] */
         Page_ChunkOut_: {
             /** Items */
@@ -769,7 +776,7 @@ export interface components {
          * RefusalReason
          * @enum {string}
          */
-        RefusalReason: "no_documents" | "off_topic" | "insufficient_context" | "guardrail_output" | "partial" | "llm_unavailable_degraded";
+        RefusalReason: "no_documents" | "off_topic" | "insufficient_context" | "guardrail_output";
         /** RetrievalInfo */
         RetrievalInfo: {
             /** Query Variants */

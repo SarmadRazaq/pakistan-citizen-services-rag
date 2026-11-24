@@ -10,10 +10,11 @@ Definitions
 - **nDCG@10**: linear gain (2 = right file and page/section, 1 = right file only), discount log2(rank+1).
   The ideal list holds max(#gold sources, #grade-2 chunks retrieved) grade-2 entries, then the grade-1
   chunks retrieved, so the score is at most 1 and a system that finds nothing scores 0.
-- **Refusal**: a response is a refusal when `answerable` is false or it carries a refusal reason other
-  than `partial` (a partial answer to a multi-part question is still an answer). Precision, recall and
-  F1 treat "refuse" as the positive class, so recall is the share of unanswerable items refused and
-  precision is hurt by false refusals. The false-refusal rate is reported over answerable items.
+- **Refusal**: a response is a refusal when its `outcome` is `refusal` (GLOSSARY.md: partial and degraded
+  answers are answers). Cached runs from before `outcome` fall back to `answerable` and `refusal_reason`.
+  Precision, recall and F1 treat "refuse" as the positive class, so recall is the share of unanswerable
+  items refused and precision is hurt by false refusals. The false-refusal rate is reported over
+  answerable items.
 - **Citation validity**: share of *answered, answerable* items whose citations all point at gold-relevant
   chunks. An answer with no citation at all counts as invalid (an uncited claim cannot be checked).
 - **Notices**: the expected notices (`not_advice`, `dated_information`, …) are all present.
@@ -138,7 +139,10 @@ def retrieval_scores(chunks: Sequence[Json], golds: Sequence[GoldSource]) -> dic
 
 
 def is_refusal(ask: Json) -> bool:
-    reason = ask.get("refusal_reason")
+    """A Refusal (GLOSSARY.md); partial and degraded answers are not refusals."""
+    if "outcome" in ask:
+        return bool(ask["outcome"] == "refusal")
+    reason = ask.get("refusal_reason")  # cached runs from before `outcome` existed
     return ask.get("answerable") is False or (reason is not None and reason != "partial")
 
 

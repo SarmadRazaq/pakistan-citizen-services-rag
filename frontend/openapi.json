@@ -1438,6 +1438,9 @@
             "type": "boolean",
             "title": "Answerable"
           },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
           "refusal_reason": {
             "anyOf": [
               {
@@ -1503,6 +1506,7 @@
           "request_id",
           "answer",
           "answerable",
+          "outcome",
           "language",
           "retrieval",
           "provider"
@@ -2608,6 +2612,17 @@
         ],
         "title": "NoticeCode"
       },
+      "Outcome": {
+        "type": "string",
+        "enum": [
+          "answer",
+          "partial_answer",
+          "degraded_answer",
+          "refusal"
+        ],
+        "title": "Outcome",
+        "description": "What kind of reply /ask gave (GLOSSARY.md \"Outcomes\"). Only `refusal` carries a RefusalReason."
+      },
       "Page_ChunkOut_": {
         "properties": {
           "items": {
@@ -2828,9 +2843,7 @@
           "no_documents",
           "off_topic",
           "insufficient_context",
-          "guardrail_output",
-          "partial",
-          "llm_unavailable_degraded"
+          "guardrail_output"
         ],
         "title": "RefusalReason"
       },

@@ -648,7 +648,7 @@ flowchart TD
 
 **Citation handling:** source `S{i}` maps to `context_chunks[i]` by construction. After quote verification, each citation becomes `{marker, chunk_id, doc_id, scope, file_name, agency, jurisdiction, effective_date, page, section, source_url, quote}`. The UI renders `[S3]` as a clickable chip, and the quoted span is highlighted inside the chunk card.
 
-**Refusal reasons (machine-readable):** `no_documents`, `off_topic`, `insufficient_context`, `guardrail_output`, `partial`, `llm_unavailable_degraded` (answered by the local fallback). Each comes with a localized message.
+**Outcomes (machine-readable, `outcome`):** `answer`, `partial_answer` (unanswered parts listed), `degraded_answer` (answered by the local fallback) and `refusal`. Only a refusal carries a **refusal reason**: `no_documents`, `off_topic`, `insufficient_context` or `guardrail_output`, each with a localized message. See `GLOSSARY.md`.
 
 **Streaming decision:** the default `/ask` is **non-streaming**. The output guardrails, quote verification above all, need the complete answer before the user sees anything. Streaming a fabricated citation and retracting it afterwards would not be a guardrail. `/ask/stream` (SSE) is a stretch goal: it streams a draft, then sends a `validated` event that replaces it. The trade-off is documented.
 
@@ -771,7 +771,7 @@ Response (abridged):
 {
   "request_id": "01JD…", "trace_id": "lf_…",
   "answer": "Notification dated … ke mutabiq urgent passport ki fee Rs … hai [S1]. Apply karne ke liye … [S2]",
-  "answerable": true, "refusal_reason": null, "degraded": false,
+  "answerable": true, "outcome": "answer", "refusal_reason": null, "degraded": false,
   "notices": [{ "code": "dated_information", "message": "Yeh fee … ki notification ke mutabiq hai. Taaza fee ke liye official website dekhein.", "source_url": "https://…" }],
   "language": { "question": "roman_ur", "answer": "roman_ur" },
   "citations": [
@@ -875,7 +875,7 @@ Every row has an automated test and is shown in the demo. † marks cases the br
 `evals/golden_set.jsonl`:
 ```json
 {"id":"q017","question":"…","language":"en","type":"multi_part","answerable":true,
- "gold_sources":[{"file_name":"Passport-Fee-Schedule.pdf","pages":[2]},{"file_name":"NADRA-CNIC-Renewal.html","section":"Required documents"}],
+ "gold_sources":[{"source_id":"PP-03","pages":[2]},{"source_id":"ID-02b","section":"Required documents"}],
  "agencies":["DGIP","NADRA"],"jurisdictions":["federal"],"expected_notices":["dated_information"],
  "reference_answer":"…","split":"test","notes":""}
 ```

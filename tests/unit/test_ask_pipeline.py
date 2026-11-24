@@ -18,6 +18,7 @@ from app.schemas import (
     FeedbackRequest,
     LanguageCode,
     NoticeCode,
+    Outcome,
     RefusalReason,
     SearchRequest,
 )
@@ -488,7 +489,7 @@ async def test_partial_answer_lists_unanswered_parts() -> None:
     res = await world.service.ask(
         user(), AskRequest(question="What is the urgent passport fee and how long does delivery take?")
     )
-    assert res.answerable is True and res.refusal_reason is RefusalReason.PARTIAL
+    assert res.answerable is True and res.outcome is Outcome.PARTIAL_ANSWER and res.refusal_reason is None
     assert res.unanswered_parts == ["delivery time"]
     assert res.retrieval.sub_queries == ["urgent passport fee", "passport delivery time"]
 
@@ -517,3 +518,13 @@ async def test_request_log_never_contains_question_text() -> None:
 async def test_public_owner_constant_matches_settings_default() -> None:
     world = await make_world()
     assert world.settings.public_owner_id == PUBLIC_OWNER_ID
+
+
+def test_outcome_precedence() -> None:
+    """GLOSSARY.md "Outcomes": refusal beats degraded, degraded beats partial."""
+    from app.generation.service import outcome_for
+
+    assert outcome_for(answerable=True, degraded=False, unanswered_parts=[]) is Outcome.ANSWER
+    assert outcome_for(answerable=True, degraded=False, unanswered_parts=["x"]) is Outcome.PARTIAL_ANSWER
+    assert outcome_for(answerable=True, degraded=True, unanswered_parts=["x"]) is Outcome.DEGRADED_ANSWER
+    assert outcome_for(answerable=False, degraded=True, unanswered_parts=[]) is Outcome.REFUSAL

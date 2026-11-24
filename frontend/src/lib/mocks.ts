@@ -354,6 +354,7 @@ export const mockPassportAnswer: AskResponse = {
   answer:
     "DGIP ki 1 July 2025 wali fee schedule ke mutabiq 36 safhon wale machine readable passport ki urgent fee Rs 9,000 hai, jabke normal fee Rs 4,500 hai [S1]. Urgent application aam taur par biometric ke baad 7 working days mein process hoti hai [S2]. Lahore ke passport office mein urgent applications subah 9 se dopahar 1 baje tak li jaati hain [S3].",
   answerable: true,
+  outcome: "answer",
   refusal_reason: null,
   unanswered_parts: [],
   degraded: false,
@@ -410,6 +411,7 @@ export const mockUrduAnswer: AskResponse = {
   answer:
     "نادرا کے فیس کارڈ کے مطابق اسمارٹ شناختی کارڈ کی عام تجدید کی فیس 750 روپے اور فوری تجدید کی فیس 1,500 روپے ہے [S1]۔ فیس نادرا رجسٹریشن سینٹر پر نقد یا موبائل والٹ کے ذریعے ادا کی جاتی ہے [S2]۔",
   answerable: true,
+  outcome: "degraded_answer",
   degraded: true,
   notices: [
     {
@@ -459,6 +461,7 @@ export const mockAdviceAnswer: AskResponse = {
   answer:
     "Sindh Rented Premises Ordinance ke mutabiq kisi kirayedar ko is ordinance ke tareeqa-e-kaar ke baghair ghar se nahi nikala ja sakta [S1]. Landlord ko Rent Controller ke paas darkhwast deni hoti hai, aur Controller kirayedar ko notice dene ke baad faisla karta hai [S2].",
   answerable: true,
+  outcome: "answer",
   degraded: false,
   notices: mockNoticeSet,
   language: { question: "roman_ur", answer: "roman_ur" },
@@ -494,6 +497,7 @@ export const mockRefusal: AskResponse = {
   answer:
     "The official sources I can search do not answer this question. Try naming the agency or programme, or check the agency's website.",
   answerable: false,
+  outcome: "refusal",
   refusal_reason: "insufficient_context",
   unanswered_parts: ["income tax rate for freelancers in 2026"],
   degraded: false,
@@ -520,6 +524,7 @@ export const mockOffTopic: AskResponse = {
   ...mockRefusal,
   request_id: "01JDMOCKOFFTOPIC0005",
   answer: "Main sirf Pakistan ki shehri khidmaat aur huqooq (ID card, passport, BISP, tax, shikayat) ke baare mein madad kar sakta hoon.",
+  outcome: "refusal",
   refusal_reason: "off_topic",
   unanswered_parts: [],
   language: { question: "roman_ur", answer: "roman_ur" },

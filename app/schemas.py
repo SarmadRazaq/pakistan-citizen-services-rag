@@ -63,8 +63,15 @@ class RefusalReason(StrEnum):
     OFF_TOPIC = "off_topic"
     INSUFFICIENT_CONTEXT = "insufficient_context"
     GUARDRAIL_OUTPUT = "guardrail_output"
-    PARTIAL = "partial"
-    LLM_UNAVAILABLE_DEGRADED = "llm_unavailable_degraded"
+
+
+class Outcome(StrEnum):
+    """What kind of reply /ask gave (GLOSSARY.md "Outcomes"). Only `refusal` carries a RefusalReason."""
+
+    ANSWER = "answer"
+    PARTIAL_ANSWER = "partial_answer"
+    DEGRADED_ANSWER = "degraded_answer"
+    REFUSAL = "refusal"
 
 
 class NoticeCode(StrEnum):
@@ -325,7 +332,8 @@ class AskResponse(Base):
     trace_id: str | None = None
     answer: str
     answerable: bool
-    refusal_reason: RefusalReason | None = None
+    outcome: Outcome
+    refusal_reason: RefusalReason | None = None  # set only when outcome is `refusal`
     unanswered_parts: list[str] = Field(default_factory=list)
     degraded: bool = False
     notices: list[Notice] = Field(default_factory=list)

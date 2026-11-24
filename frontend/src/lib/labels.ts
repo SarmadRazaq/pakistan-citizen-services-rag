@@ -39,8 +39,6 @@ export const REFUSAL_LABEL: Record<RefusalReason, string> = {
   off_topic: "Outside this helpdesk's topics",
   insufficient_context: "The sources do not answer this",
   guardrail_output: "Answer withheld by an output check",
-  partial: "Only part of the question could be answered",
-  llm_unavailable_degraded: "Answer model unavailable",
 };
 
 export const NOTICE_LABEL: Record<NoticeCode, string> = {

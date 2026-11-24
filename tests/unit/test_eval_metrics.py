@@ -36,7 +36,7 @@ def _item(**over: Any) -> GoldenItem:
         "answer_language": "en",
         "type": "single_fact",
         "answerable": True,
-        "gold_sources": [{"file_name": FILE, "pages": [13]}],
+        "gold_sources": [{"source_id": "ID-05", "pages": [13]}],
         "agencies": ["NADRA"],
         "jurisdictions": ["federal"],
         "expected_notices": [],
@@ -93,7 +93,7 @@ def test_ndcg_exact_values() -> None:
 
 
 def test_retrieval_scores_from_chunks() -> None:
-    golds = [GoldSource(file_name=FILE, pages=[13])]
+    golds = [GoldSource(source_id="ID-05", pages=[13])]
     chunks = [_chunk(1, 2), _chunk(2, 13), _chunk(3, 13, file_name="other.pdf")]
     s = retrieval_scores(chunks, golds)
     assert s["hit@1"] == 0.0 and s["hit@3"] == 1.0 and s["hit@10"] == 1.0
@@ -135,13 +135,16 @@ def test_is_refusal() -> None:
     assert is_refusal({"answerable": True, "refusal_reason": "insufficient_context"})
     assert not is_refusal({"answerable": True, "refusal_reason": "partial"})
     assert not is_refusal({"answerable": True, "refusal_reason": None})
+    assert is_refusal({"answerable": False, "outcome": "refusal", "refusal_reason": "off_topic"})
+    assert not is_refusal({"answerable": True, "outcome": "partial_answer", "refusal_reason": None})
+    assert not is_refusal({"answerable": True, "outcome": "degraded_answer", "refusal_reason": None})
 
 
 # ---------------------------------------------------------------- answers
 
 
 def test_citation_validity_uses_retrieved_page_span() -> None:
-    golds = [GoldSource(file_name=FILE, pages=[14])]
+    golds = [GoldSource(source_id="ID-05", pages=[14])]
     ask = {
         "citations": [{"marker": "S1", "chunk_id": "c1", "file_name": FILE, "page": 13, "quote": "q"}],
         "retrieval": {"chunks": [_chunk(1, 13, page_start=13, page_end=14, chunk_id="c1")]},
