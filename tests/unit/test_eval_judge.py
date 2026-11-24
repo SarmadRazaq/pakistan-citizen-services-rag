@@ -30,7 +30,7 @@ def _item() -> GoldenItem:
             "answer_language": "roman_ur",
             "type": "advice_boundary",
             "answerable": True,
-            "gold_sources": [{"file_name": "ID-05__x.pdf", "pages": [14]}],
+            "gold_sources": [{"source_id": "ID-05", "pages": [14]}],
             "agencies": ["NADRA"],
             "jurisdictions": ["federal"],
             "expected_notices": ["not_advice", "referral"],

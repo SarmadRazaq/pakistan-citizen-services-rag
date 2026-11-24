@@ -33,10 +33,14 @@ Split = Literal["dev", "test"]
 
 
 class GoldSource(BaseModel):
-    """A gold label at document + page/section level (never chunk ids, so it survives re-chunking)."""
+    """A Gold source (GLOSSARY.md): a Source and page range or section.
+
+    It names the Source's seed ID (`ID-05`, `ID-02a`), never a file name or chunk id, so it survives
+    re-collection, renamed files, new Versions and re-chunking.
+    """
 
     model_config = ConfigDict(extra="forbid")
-    file_name: str
+    source_id: str = Field(pattern=r"^[A-Z]{2}-\d{2}[a-z]?$")
     pages: list[int] | None = None
     section: str | None = None
 

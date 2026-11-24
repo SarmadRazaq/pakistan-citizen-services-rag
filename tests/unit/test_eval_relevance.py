@@ -4,29 +4,28 @@ from __future__ import annotations
 
 import pytest
 from evals.golden import GoldSource
-from evals.relevance import chunk_grade, chunk_pages, file_matches, grade, is_relevant, split_source_id
+from evals.relevance import chunk_grade, chunk_pages, grade, is_relevant, source_matches, split_source_id
 
 MANUAL = "ID-05__nadra-registration-policy-6-0-2-en.pdf"
 PLAIN = "nadra-registration-policy-6-0-2-en.pdf"
 
 
 @pytest.mark.parametrize(
-    ("chunk_file", "gold_file", "expected"),
+    ("chunk_file", "source_id", "expected"),
     [
-        (MANUAL, MANUAL, True),
-        (MANUAL, PLAIN, True),  # manual-save name vs the plain gold name
-        (PLAIN, MANUAL, True),
-        ("id-05__NADRA-Registration-Policy-6-0-2-EN.pdf", MANUAL, True),  # case-insensitive
-        ("ID-05__renamed-slug.pdf", MANUAL, True),  # same source id, different slug
-        ("ID-06__nadra-registration-policy-6-0-2-ur.pdf", MANUAL, False),  # the Urdu twin is another doc
-        ("ID-02a__nadra-cnic-new.html", "ID-02b__nadra-cnic-renew.html", False),
-        ("storage/u_public/" + MANUAL, MANUAL, True),  # a path, not just a name
-        ("other.pdf", PLAIN, False),
-        (None, PLAIN, False),
+        (MANUAL, "ID-05", True),
+        ("id-05__NADRA-Registration-Policy-6-0-2-EN.pdf", "ID-05", True),  # case-insensitive
+        ("ID-05__renamed-slug.pdf", "ID-05", True),  # re-collected under a new slug
+        ("ID-06__nadra-registration-policy-6-0-2-ur.pdf", "ID-05", False),  # Translation pair: another Source
+        ("ID-02a__nadra-cnic-new.html", "ID-02b", False),
+        ("ID-02a__nadra-cnic-new.html", "ID-02", False),  # sub-pages are Sources of their own
+        ("storage/u_public/" + MANUAL, "ID-05", True),  # a path, not just a name
+        (PLAIN, "ID-05", False),  # a file with no seed ID comes from no Source
+        (None, "ID-05", False),
     ],
 )
-def test_file_matches(chunk_file: str | None, gold_file: str, expected: bool) -> None:
-    assert file_matches(chunk_file, gold_file) is expected
+def test_source_matches(chunk_file: str | None, source_id: str, expected: bool) -> None:
+    assert source_matches(chunk_file, source_id) is expected
 
 
 def test_split_source_id() -> None:
@@ -36,11 +35,12 @@ def test_split_source_id() -> None:
 
 
 def test_page_span_overlap() -> None:
-    gold = GoldSource(file_name=MANUAL, pages=[14])
+    gold = GoldSource(source_id="ID-05", pages=[14])
     assert grade({"file_name": MANUAL, "page": 14}, gold) == 2
-    assert grade({"file_name": MANUAL, "page": 13}, gold) == 1  # right file, wrong page
+    assert grade({"file_name": MANUAL, "page": 13}, gold) == 1  # right Source, wrong page
     assert grade({"file_name": MANUAL, "page_start": 13, "page_end": 15}, gold) == 2
     assert grade({"file_name": "x.pdf", "page": 14}, gold) == 0
+    assert grade({"file_name": PLAIN, "page": 14}, gold) == 0  # no seed ID: not from the Source
     assert grade({"file_name": MANUAL}, gold) == 1  # page unknown: cannot confirm the place
     assert chunk_pages({"page_start": 3, "page_end": 1}) == {3}
     assert chunk_pages({"pages": [2, "4"]}) == {2, 4}
@@ -48,14 +48,14 @@ def test_page_span_overlap() -> None:
 
 def test_section_match_for_html() -> None:
     html = "ID-02b__nadra-cnic-renew.html"
-    gold = GoldSource(file_name=html, section="Required documents")
+    gold = GoldSource(source_id="ID-02b", section="Required documents")
     assert grade({"file_name": html, "section_path": ["CNIC Renewal", "Required Documents"]}, gold) == 2
     assert grade({"file_name": html, "section": "CNIC Renewal › Required documents"}, gold) == 2
     assert grade({"file_name": html, "section_path": ["CNIC Renewal", "Fees"]}, gold) == 1
     # no section info on the chunk: the heading in the text counts (contextual chunk headers)
     assert grade({"file_name": html, "text": "Required documents: old CNIC, ..."}, gold) == 2
     assert grade({"file_name": html, "text": "Fee schedule"}, gold) == 1
-    nested = GoldSource(file_name=html, section="CNIC Renewal > Required documents")
+    nested = GoldSource(source_id="ID-02b", section="CNIC Renewal > Required documents")
     assert (
         grade({"file_name": html, "section_path": ["CNIC Renewal", "Required documents", "Overseas"]}, nested)
         == 2
@@ -63,9 +63,9 @@ def test_section_match_for_html() -> None:
 
 
 def test_whole_document_gold_and_multiple_golds() -> None:
-    whole = GoldSource(file_name=PLAIN)
+    whole = GoldSource(source_id="ID-05")
     assert grade({"file_name": MANUAL, "page": 40}, whole) == 2
-    golds = [GoldSource(file_name="a.pdf", pages=[1]), GoldSource(file_name=MANUAL, pages=[13])]
+    golds = [GoldSource(source_id="PB-01", pages=[1]), GoldSource(source_id="ID-05", pages=[13])]
     chunk = {"file_name": MANUAL, "page": 13}
     assert chunk_grade(chunk, golds) == 2 and is_relevant(chunk, golds)
     assert not is_relevant({"file_name": MANUAL, "page": 2}, golds)

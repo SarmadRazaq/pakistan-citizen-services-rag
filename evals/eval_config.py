@@ -30,7 +30,9 @@ class RequestParams(BaseModel):
     top_k: int = Field(default=5, ge=1, le=10)
     search_top_k: int = Field(default=20, ge=10, le=50)  # ≥ 10 so Hit@10 / nDCG@10 are defined
     answer_language: Literal["auto", "item", "en", "ur", "roman_ur"] = "auto"
-    scope: Literal["all", "mine", "public"] = "public"
+    # Golden items are judged against the Official corpus only (GLOSSARY.md "Golden item"), so a config
+    # can never widen the scope to the eval user's own uploads.
+    scope: Literal["public"] = "public"
 
 
 class ClosedBookParams(BaseModel):

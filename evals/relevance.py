@@ -1,15 +1,16 @@
 """Is a retrieved chunk relevant to a golden item? (blueprint §10.1, "key choice")
 
-Gold labels are at document + page/section level, so they stay valid across chunking configs.
+Gold labels name a Source (its seed ID) + page/section, so they stay valid across chunking configs,
+re-collection and renamed files.
 
 A chunk is **relevant** (grade 2) to a gold source when
-1. its file name matches the gold file name, allowing the manual-save names `<ID>__slug.ext`
-   (`ID-05__nadra-registration-policy-6-0-2-en.pdf` matches a gold `nadra-registration-policy-6-0-2-en.pdf`,
-   and two `ID-05__…` names match each other whatever the slug), **and**
+1. its file comes from the gold Source: corpus files are named `<ID>__slug.ext`, and the ID prefix
+   must equal the gold `source_id` exactly (case-insensitive; `ID-02a` and `ID-02b` are different
+   Sources, and so are the Translation pair `ID-05` and `ID-06`), **and**
 2. its page span overlaps the gold pages, **or** (HTML/DOCX/MD) its section path matches the gold section.
 
-A chunk from the right file at the wrong place gets grade 1 (used by nDCG only). A gold source with
-neither pages nor a section is a whole-document label: any chunk of that file is grade 2.
+A chunk from the right Source at the wrong place gets grade 1 (used by nDCG only). A gold source with
+neither pages nor a section is a whole-Source label: any chunk of that Source is grade 2.
 
 Chunks are plain dicts (the JSON the API returns), so this module does not depend on the service code.
 Page spans are read from `page_start`/`page_end` when present, else `page`; sections from
@@ -45,21 +46,12 @@ def split_source_id(file_name: str) -> tuple[str | None, str]:
     return None, base
 
 
-def file_matches(chunk_file: str | None, gold_file: str) -> bool:
+def source_matches(chunk_file: str | None, source_id: str) -> bool:
+    """True when the chunk's file was collected from the Source `source_id`."""
     if not chunk_file:
         return False
-    a, b = _basename(chunk_file), _basename(gold_file)
-    if a == b:
-        return True
-    id_a, slug_a = split_source_id(a)
-    id_b, slug_b = split_source_id(b)
-    if id_a and id_b:
-        return id_a == id_b
-    if id_a:
-        return slug_a == b
-    if id_b:
-        return slug_b == a
-    return False
+    chunk_id, _ = split_source_id(chunk_file)
+    return chunk_id is not None and chunk_id == source_id.strip().casefold()
 
 
 def _as_int(value: Any) -> int | None:
@@ -119,8 +111,8 @@ def section_matches(chunk: Chunk, gold_section: str) -> bool:
 
 
 def grade(chunk: Chunk, gold: GoldSource) -> int:
-    """2 = right file and right place, 1 = right file only, 0 = other file."""
-    if not file_matches(chunk.get("file_name"), gold.file_name):
+    """2 = right Source and right place, 1 = right Source only, 0 = other Source."""
+    if not source_matches(chunk.get("file_name"), gold.source_id):
         return 0
     if not gold.pages and not gold.section:
         return 2

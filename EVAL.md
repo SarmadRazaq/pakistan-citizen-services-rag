@@ -54,9 +54,10 @@ _Not run yet._
 | Judge | correctness 0–2, citation support, refusal appropriateness, advice boundary | `evals/judge.py`, GPT-OSS-120B, temperature 0 | see rubric |
 | Ops | p50 / p95 latency, tokens | `latency_ms.total` and `usage` from `/ask` | all |
 
-A chunk is **relevant** when its file matches a gold source (manual-save names `<ID>__slug.ext` match the
-plain name, and two `<ID>__…` names match on the ID) **and** its page span overlaps the gold pages, or,
-for HTML/DOCX/MD, its section path matches the gold section (`evals/relevance.py`).
+A chunk is **relevant** when it comes from the gold source's Source (gold sources name a seed ID such as
+`ID-05`, and corpus files are named `<ID>__slug.ext`, so the ID prefix must match exactly) **and** its page
+span overlaps the gold pages, or, for HTML/DOCX/MD, its section path matches the gold section
+(`evals/relevance.py`). Naming the Source, not the file, keeps labels valid when a Source is re-collected.
 
 ## Configuration comparison
 
