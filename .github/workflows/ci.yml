@@ -32,6 +32,9 @@ jobs:
 
       - name: Requirements are fully pinned
         run: |
+          # Re-resolve while preferring the committed pins: this only differs when requirements.in
+          # changed without re-pinning, not whenever an upstream package publishes a new release.
+          cp requirements.txt /tmp/req.txt
           uv pip compile --universal requirements.in -o /tmp/req.txt -q
           diff <(grep -E '^[a-zA-Z]' requirements.txt | sort) <(grep -E '^[a-zA-Z]' /tmp/req.txt | sort) \
             || (echo "requirements.txt is stale: run 'uv pip compile --universal requirements.in -o requirements.txt'" && exit 1)
