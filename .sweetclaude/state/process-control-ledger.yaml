@@ -1,6 +1,6 @@
 workflow: code-issue
-story_id: ISSUE-002
-github_issue: 3
+story_id: ISSUE-003
+github_issue: 4
 current_step: complete
 rigor: small
 success_criteria_contract: null
