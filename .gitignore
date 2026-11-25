@@ -66,3 +66,6 @@ Thumbs.db
 .sweetclaude/cache/
 .sweetclaude/state/session-state.yaml
 .sweetclaude/state/session-status.txt
+
+# written by scripts/check_models.py; depends on the API key in use
+evals/configs/models_available.json
