@@ -42,7 +42,7 @@ from app.db.models import Document  # noqa: E402
 from app.db.session import Database  # noqa: E402
 from app.ingestion.service import IngestionService  # noqa: E402
 from app.protocols import UploadedFile  # noqa: E402
-from app.schemas import DocumentMetadata, Jurisdiction  # noqa: E402
+from app.schemas import DocumentMetadata, DocumentStatus, Jurisdiction  # noqa: E402
 
 MANIFEST_FILE = ROOT / "corpus" / "manifest.csv"
 DEFAULT_USES = ("core", "pair", "core (D4)")
@@ -86,7 +86,11 @@ async def _existing_public_doc(db: Database, ctx: TenantContext, source_url: str
         row = (
             await s.scalars(
                 select(Document.id).where(
-                    Document.user_id == ctx.public_owner_id, Document.source_url == source_url
+                    Document.user_id == ctx.public_owner_id,
+                    Document.source_url == source_url,
+                    # a FAILED row is retried as a fresh upload (which purges it), not replaced:
+                    # replacing it with the same bytes would answer no_change and never retry
+                    Document.status != DocumentStatus.FAILED.value,
                 )
             )
         ).first()
@@ -121,11 +125,9 @@ async def seed(
         try:
             existing = await _existing_public_doc(db, ctx, url) if url else None
             if existing:
-                doc, _ = await service.replace(ctx, existing, upload)
-                report.replaced.append(row_id)
-                log(f"updated {row_id}: v{doc.version} ({doc.last_ingest})")
+                doc, accepted = await service.replace(ctx, existing, upload)
             else:
-                doc, _ = await service.upload(
+                doc, accepted = await service.upload(
                     ctx,
                     upload,
                     visibility="public",
@@ -133,6 +135,18 @@ async def seed(
                     source_url=url,
                     doc_type=row.get("doc_type") or None,
                 )
+            if accepted:  # large file: ingested by a background job; wait for it before going on
+                pages = doc.progress.pages_total if doc.progress else "?"
+                log(f"wait    {row_id}: background ingestion ({pages} pages)")
+                await service.drain()
+                doc = await service.get(ctx, doc.id)
+            if doc.status is DocumentStatus.FAILED:
+                report.failed.append(row_id)
+                log(f"failed  {row_id}: {doc.error}")
+            elif existing:
+                report.replaced.append(row_id)
+                log(f"updated {row_id}: v{doc.version} ({doc.last_ingest})")
+            else:
                 report.created.append(row_id)
                 log(f"added   {row_id}: {doc.chunk_count} chunks")
         except AppError as exc:
