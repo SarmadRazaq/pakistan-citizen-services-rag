@@ -11,6 +11,7 @@ import type {
   DocumentPage,
   HealthResponse,
   Jurisdiction,
+  MetricsSummary,
   Scope,
   SignupRequest,
   UserOut,
@@ -26,6 +27,8 @@ export type UploadOptions = {
   effective_date?: string;
 };
 
+export type MetricsWindow = MetricsSummary["window"];
+
 export type ListOptions = { scope: Scope; cursor?: string | null; limit?: number };
 
 export interface Api {
@@ -40,6 +43,7 @@ export interface Api {
   patchDocument(id: string, body: DocumentMetadata): Promise<DocumentOut>;
   deleteDocument(id: string): Promise<void>;
   ask(body: AskRequest): Promise<AskResponse>;
+  metrics(window: MetricsWindow): Promise<MetricsSummary>;
 }
 
 /** Same format the backend accepts (`^[A-Za-z0-9._-]{1,64}$`); works outside secure contexts too. */
@@ -129,6 +133,7 @@ const realApi: Api = {
     await request(`documents/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   ask: (body) => request<AskResponse>("ask", json("POST", body)),
+  metrics: (window) => request<MetricsSummary>(`metrics/summary?window=${window}`),
 };
 
 export const api: Api = USE_MOCKS ? mockApi : realApi;

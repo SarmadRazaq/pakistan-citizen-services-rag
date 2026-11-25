@@ -159,6 +159,18 @@ def check_ooxml(path: Path, declared: str) -> None:
         raise _reject(ErrorCode.CORRUPT_FILE, f"The {declared.upper()} file is corrupt.") from exc
 
 
+def pdf_page_count(path: Path) -> int:
+    """Pages of a PDF, 0 if it cannot be read (validation has already vetted the file)."""
+    import pymupdf
+
+    fitz: Any = pymupdf
+    try:
+        with fitz.open(stream=path.read_bytes(), filetype="pdf") as doc:
+            return int(doc.page_count)
+    except Exception:
+        return 0
+
+
 def check_pdf(path: Path, settings: Settings) -> None:
     """Encrypted, corrupt, oversized and active-content checks for PDFs (GD-4, GD-5, GD-7)."""
     import pymupdf

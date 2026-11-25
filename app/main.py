@@ -24,6 +24,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.ratelimit import install_rate_limits
 from app.db.session import Database
+from app.observability.metrics import MetricsService
 
 log = structlog.get_logger(__name__)
 
@@ -60,7 +61,9 @@ async def _wire_runtime(app: FastAPI, settings: Settings, db: Database) -> list[
 
     from app.ingestion.service import IngestionService
 
-    app.state.documents = IngestionService(settings, db, retrieval.store, retrieval.embedder)
+    documents = IngestionService(settings, db, retrieval.store, retrieval.embedder)
+    app.state.documents = documents
+    closables.append(documents)  # cancels running background jobs at shutdown
     return closables
 
 
@@ -123,6 +126,7 @@ def create_app(
         app.state.health = health_service
     if db is not None:
         app.state.db = db
+        app.state.metrics = MetricsService(db)
         app.state.auth = AuthService(settings, db)  # refuses the default JWT secret in prod
 
     install_error_handlers(app)

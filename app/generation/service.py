@@ -21,6 +21,7 @@ from sqlalchemy import select
 from app.config import Settings
 from app.core.context import get_request_id
 from app.core.errors import AppError, ErrorCode
+from app.core.eval_overrides import EvalOverrides
 from app.core.ids import new_feedback_id
 from app.core.tenancy import TenantContext, Visibility
 from app.db.models import Document, Feedback, RequestLog, utcnow
@@ -32,6 +33,7 @@ from app.generation.query_understanding import QueryUnderstanding, detect_langua
 from app.guardrails.advice import Referral, load_referrals
 from app.guardrails.input_guards import sanitize
 from app.guardrails.output_guards import third_party_notice
+from app.observability.cost import ModelUsage, request_cost
 from app.protocols import (
     Candidate,
     InjectionClassifier,
@@ -208,7 +210,9 @@ class RagAskService:
         degraded: bool = False,
         answerable: bool | None = None,
         tokens: tuple[int, int] = (0, 0),
+        calls: Sequence[ModelUsage] = (),
     ) -> None:
+        cost_usd, list_price_usd = request_cost(self.settings, calls)
         row = RequestLog(
             request_id=request_id,
             user_id=ctx.user_id,
@@ -222,6 +226,8 @@ class RagAskService:
             answerable=answerable,
             input_tokens=tokens[0],
             output_tokens=tokens[1],
+            cost_usd=cost_usd,
+            list_price_usd=list_price_usd,
         )
         try:
             async with self.db.session(ctx) as s:
@@ -229,9 +235,22 @@ class RagAskService:
         except Exception as exc:  # the log must never turn an answer into an error
             log.warning("request_log.write_failed", error=type(exc).__name__, route=route)
 
+    def _model_usage(self, state: AskState) -> list[ModelUsage]:
+        """Every model call of the request (helper + each generation attempt) for cost accounting."""
+        q: QueryUnderstanding | None = state.get("understanding")
+        calls = [
+            ModelUsage(r.model, r.endpoint, r.input_tokens, r.output_tokens)
+            for r in state.get("llm_calls", [])
+        ]
+        if q and any(q.usage):
+            calls.insert(0, ModelUsage(self.settings.helper_model, "nvidia", q.usage[0], q.usage[1]))
+        return calls
+
     # ------------------------------------------------------------ ask
 
-    async def ask(self, ctx: TenantContext, request: AskRequest) -> AskResponse:
+    async def ask(
+        self, ctx: TenantContext, request: AskRequest, *, overrides: EvalOverrides | None = None
+    ) -> AskResponse:
         started = perf_counter()
         request_id = self._request_id(ctx)
         ctx = ctx.with_scope(request.scope)
@@ -239,7 +258,14 @@ class RagAskService:
             log.debug("ask.question", question=request.question)
         try:
             await self._check_doc_ids(ctx, request.doc_ids)
-            initial: AskState = {"ctx": ctx, "request": request, "flags": [], "timings": {}, "llm_calls": []}
+            initial: AskState = {
+                "ctx": ctx,
+                "request": request,
+                "overrides": overrides,
+                "flags": [],
+                "timings": {},
+                "llm_calls": [],
+            }
             state: AskState = await self._graph.ainvoke(initial)
             error = state.get("error")
             if error is not None:
@@ -265,6 +291,7 @@ class RagAskService:
             degraded=response.degraded,
             answerable=response.answerable,
             tokens=(response.usage.input_tokens, response.usage.output_tokens),
+            calls=self._model_usage(state),
         )
         log.info(
             "ask.done",
@@ -274,6 +301,9 @@ class RagAskService:
             guard_output=response.guardrails.output,
             flags=response.guardrails.flags,
             latency_ms=response.latency_ms.get("total"),
+            steps_ms=response.latency_ms,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
         )
         return response
 
@@ -356,7 +386,9 @@ class RagAskService:
 
     # ------------------------------------------------------------ search
 
-    async def search(self, ctx: TenantContext, request: SearchRequest) -> SearchResponse:
+    async def search(
+        self, ctx: TenantContext, request: SearchRequest, *, overrides: EvalOverrides | None = None
+    ) -> SearchResponse:
         started = perf_counter()
         request_id = self._request_id(ctx)
         ctx = ctx.with_scope(request.scope)
@@ -383,6 +415,7 @@ class RagAskService:
                     filters=filters,
                     candidates_k=request.top_k,
                     context_k=min(self.settings.context_k, request.top_k),
+                    overrides=overrides,
                 ),
             )
             retrieve_ms = int((perf_counter() - t0) * 1000)

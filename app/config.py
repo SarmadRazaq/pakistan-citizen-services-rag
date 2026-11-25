@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     #   local_only: private-context answers go to the local Ollama model only
     private_context_policy: PrivateContextPolicy = "hosted_with_notice"
     llm_cache_dir: Path = Path("evals/.cache/llm")  # eval response cache (RESPONSE_CACHE=eval_only)
+    # Cost accounting (B3). MODEL_PRICES is JSON: {"model-id": [usd_per_1M_input, usd_per_1M_output]}.
+    # Empty by default: no prices are invented. NVIDIA_BILLED=true makes the hosted calls count as real cost.
+    model_prices: dict[str, tuple[float, float]] = Field(default_factory=dict)
+    nvidia_billed: bool = False
 
     # --- Hosted retrieval models (default; NVIDIA API catalog, same NVIDIA_API_KEY) ---
     embedding_provider: Provider = "nvidia"
@@ -117,6 +121,9 @@ class Settings(BaseSettings):
     # --- Limits ---
     max_upload_mb: int = 50
     sync_ingest_max_mb: int = 10
+    sync_ingest_max_pages: int = 80
+    background_ingest_workers: int = Field(default=2, ge=1)
+    background_ingest_queue_max: int = Field(default=20, ge=1)
     max_pages: int = 1000
     max_question_chars: int = 2000
     rate_limit_ask: str = "30/minute"
@@ -131,6 +138,9 @@ class Settings(BaseSettings):
     max_chunks_per_user: int = 20_000
     max_ingest_jobs_per_user: int = 2
     response_cache: ResponseCacheMode = "eval_only"
+    # Honour the X-Eval-Config header (admin callers only) so the eval harness can compare configurations.
+    # Off by default and never needed in production.
+    eval_overrides_enabled: bool = False
 
     # --- Citizen-services domain (§3.1, GO-9..11) ---
     referrals_file: Path = Path("app/guardrails/referrals.yaml")

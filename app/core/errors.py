@@ -55,6 +55,7 @@ class ErrorCode(Enum):
     DUPLICATE_PUBLIC_DOCUMENT = (409, "Document already in the official corpus")
     NO_CHANGE = (409, "No change")
     LAST_ADMIN = (409, "Cannot delete the last admin")
+    INGEST_IN_PROGRESS = (409, "Ingestion in progress")
     # 413 / 415 / 422 / 429
     FILE_TOO_LARGE = (413, "File too large")
     QUOTA_EXCEEDED = (413, "Quota exceeded")

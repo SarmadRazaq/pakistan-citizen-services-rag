@@ -13,6 +13,7 @@ import { Badge, Button, cx } from "./ui";
 const NAV = [
   { href: "/", label: "Ask" },
   { href: "/documents", label: "Documents" },
+  { href: "/metrics", label: "Metrics" },
 ];
 
 function HealthDot() {

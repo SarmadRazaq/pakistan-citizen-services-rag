@@ -8,13 +8,15 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 
 from app.config import Settings
 from app.core.errors import AppError, ErrorCode
+from app.core.eval_overrides import APPLIED_HEADER, EVAL_HEADER, EvalOverrides, parse_eval_header
 from app.core.health import HealthService
 from app.core.tenancy import TenantContext
 from app.db.session import Database
+from app.observability.metrics import MetricsService
 from app.protocols import AskService, DocumentService
 
 
@@ -53,6 +55,12 @@ def get_ask_service(request: Request) -> AskService:
     return service
 
 
+def get_metrics_service(request: Request) -> MetricsService:
+    service = _state(request, "metrics", "observability")
+    assert isinstance(service, MetricsService)
+    return service
+
+
 async def get_tenant(request: Request) -> TenantContext:
     """Resolve the JWT into a TenantContext (scope ALL; services narrow it with ctx.with_scope).
 
@@ -73,9 +81,31 @@ async def get_tenant(request: Request) -> TenantContext:
     return ctx
 
 
+def get_eval_overrides(
+    request: Request,
+    response: Response,
+    settings: Annotated[Settings, Depends(get_app_settings)],
+    tenant: Annotated[TenantContext, Depends(get_tenant)],
+) -> EvalOverrides | None:
+    """The `X-Eval-Config` overrides, or None.
+
+    Honoured only when `EVAL_OVERRIDES_ENABLED=true` (default false, also in prod) and the caller is an
+    admin; otherwise the header is ignored entirely (not even validated, no echo). When honoured, an
+    invalid header is a 422 and `X-Eval-Config-Applied` carries the normalised overrides.
+    """
+    raw = request.headers.get(EVAL_HEADER)
+    if raw is None or not settings.eval_overrides_enabled or not tenant.is_admin:
+        return None
+    overrides = parse_eval_header(raw, settings.generation_models)
+    response.headers[APPLIED_HEADER] = overrides.applied_json()
+    return overrides
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 HealthDep = Annotated[HealthService, Depends(get_health_service)]
 TenantDep = Annotated[TenantContext, Depends(get_tenant)]
 DbDep = Annotated[Database, Depends(get_db)]
 DocumentServiceDep = Annotated[DocumentService, Depends(get_document_service)]
 AskServiceDep = Annotated[AskService, Depends(get_ask_service)]
+EvalOverridesDep = Annotated[EvalOverrides | None, Depends(get_eval_overrides)]
+MetricsServiceDep = Annotated[MetricsService, Depends(get_metrics_service)]

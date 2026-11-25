@@ -13,6 +13,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from app.core.eval_overrides import EvalOverrides
 from app.core.tenancy import TenantContext
 
 # ---------------------------------------------------------------- extraction
@@ -147,7 +148,10 @@ class VectorStore(Protocol):
         filters: SearchFilters,
         prefetch_k: int,
         limit: int,
-    ) -> list[ScoredPoint]: ...
+        mode: Literal["hybrid", "dense", "sparse"] = "hybrid",
+    ) -> list[ScoredPoint]:
+        """`mode` is an eval override: `dense` / `sparse` search a single leg (no fused `rrf_score`)."""
+        ...
 
     async def point_ids(self, ctx: TenantContext, doc_id: str) -> set[str]: ...
 
@@ -218,7 +222,10 @@ class LLMClient(Protocol):
         purpose: Literal["generate", "helper", "judge"],
         max_tokens: int = 1024,
         temperature: float = 0.0,
-    ) -> LLMResult: ...
+        model: str | None = None,
+    ) -> LLMResult:
+        """`model` (eval override, `generate` only) restricts the hosted chain to that one model."""
+        ...
 
     async def available_models(self) -> list[str]: ...
 
@@ -235,6 +242,7 @@ class RetrievalQuery:
     filters: SearchFilters = SearchFilters()
     candidates_k: int = 20
     context_k: int = 5
+    overrides: EvalOverrides | None = None  # eval-only: retrieval_mode / rerank
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,8 +339,12 @@ class DocumentService(Protocol):
 class AskService(Protocol):
     """Implemented by app/generation/service.py (LangGraph pipeline)."""
 
-    async def ask(self, ctx: TenantContext, request: AskRequest) -> AskResponse: ...
+    async def ask(
+        self, ctx: TenantContext, request: AskRequest, *, overrides: EvalOverrides | None = None
+    ) -> AskResponse: ...
 
-    async def search(self, ctx: TenantContext, request: SearchRequest) -> SearchResponse: ...
+    async def search(
+        self, ctx: TenantContext, request: SearchRequest, *, overrides: EvalOverrides | None = None
+    ) -> SearchResponse: ...
 
     async def feedback(self, ctx: TenantContext, request: FeedbackRequest) -> FeedbackOut: ...

@@ -33,3 +33,4 @@ export type NoticeCode = S["NoticeCode"];
 export type RefusalReason = S["RefusalReason"];
 
 export type HealthResponse = S["HealthResponse"];
+export type MetricsSummary = S["MetricsSummary"];

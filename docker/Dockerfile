@@ -3,7 +3,8 @@ FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \n    HF_HOME=/srv/.hf
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/srv/.hf
 
 # Tesseract with Urdu + English data is needed for OCR (scanned PDFs, images, junk text layers).
 RUN apt-get update \
