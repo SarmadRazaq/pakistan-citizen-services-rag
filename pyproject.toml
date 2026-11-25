@@ -11,6 +11,7 @@ readme = "README.md"
 line-length = 110
 target-version = "py312"
 src = ["app", "tests", "scripts"]
+extend-exclude = ["*.ipynb"]  # notebooks are executed demos (cell-level imports); notebooks/_support.py is linted
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "N", "S", "ASYNC", "RUF", "SIM", "PTH", "TID"]
