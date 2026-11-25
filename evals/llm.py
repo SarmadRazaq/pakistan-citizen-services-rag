@@ -24,7 +24,7 @@ import httpx
 
 from app.config import Settings
 
-MAX_RPM = 35
+MAX_RPM = 35  # ceiling on the NVIDIA free tier only
 Message = dict[str, str]
 Sleep = Callable[[float], Awaitable[None]]
 
@@ -38,7 +38,7 @@ class CacheMissError(LLMError):
 
 
 class MissingKeyError(LLMError):
-    """No NVIDIA_API_KEY in the environment / .env."""
+    """No LLM key (LLM_API_KEY / NVIDIA_API_KEY / OPENAI_API_KEY) in the environment / .env."""
 
 
 class RateLimiter:
@@ -99,7 +99,9 @@ class ChatClient:
         self.offline = offline
         self.max_attempts = max_attempts
         self._sleep = sleep
-        rpm = min(MAX_RPM, max_rpm or settings.llm_max_rpm)
+        rpm = max_rpm or settings.llm_max_rpm
+        if settings.llm_is_nvidia:
+            rpm = min(MAX_RPM, rpm)  # the NVIDIA free tier allows ~40 requests/minute; OpenAI tiers differ
         # Share one limiter between clients that use the same key (judge + closed-book).
         self.limiter = limiter or RateLimiter(rpm, clock=clock, sleep=sleep)
         self._transport = transport
@@ -120,9 +122,11 @@ class ChatClient:
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
-            key = self.settings.nvidia_api_key.get_secret_value() if self.settings.nvidia_api_key else ""
+            key = self.settings.llm_key
             if not key:
-                raise MissingKeyError("NVIDIA_API_KEY is not set (add it to .env)")
+                raise MissingKeyError(
+                    "LLM_API_KEY (or NVIDIA_API_KEY / OPENAI_API_KEY) is not set (add it to .env)"
+                )
             self._client = httpx.AsyncClient(
                 base_url=self.settings.nvidia_base_url.rstrip("/"),
                 headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
@@ -191,12 +195,12 @@ class ChatClient:
         self, model: str, messages: Sequence[Message], *, max_tokens: int, json_mode: bool
     ) -> ChatResult:
         client = self._http()
-        body: dict[str, Any] = {
-            "model": model,
-            "messages": list(messages),
-            "temperature": 0,
-            "max_tokens": max_tokens,
-        }
+        body: dict[str, Any] = {"model": model, "messages": list(messages)}
+        if self.settings.llm_token_param == "max_completion_tokens":  # noqa: S105
+            body["max_completion_tokens"] = max_tokens  # reasoning models: no `temperature`
+        else:
+            body["temperature"] = 0
+            body["max_tokens"] = max_tokens
         if json_mode and self.settings.llm_json_mode:
             body["response_format"] = {"type": "json_object"}
         last = ""

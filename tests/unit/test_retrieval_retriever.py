@@ -360,3 +360,28 @@ async def test_rerank_false_keeps_at_least_one_context_chunk(
     strict = settings.model_copy(update={"tau_keep": 0.999})
     res = await _retriever(strict, traced).retrieve(user_a, _ovr(rerank=False))
     assert len(res.context) == 1  # the relevance gate decides on max_rerank
+
+
+async def test_reranker_provider_none_never_calls_reranker_and_still_gates(
+    settings: Settings, traced: _TracingStore, user_a: TenantContext
+) -> None:
+    """RERANKER_PROVIDER=none: the default pipeline (no eval override) behaves like rerank=false."""
+    none_settings = settings.model_copy(update={"reranker_provider": "none"})
+    reranker = RecordingReranker()
+    res = await _retriever(none_settings, traced, reranker).retrieve(
+        user_a, RetrievalQuery(variants=("urgent passport fee",), context_k=2)
+    )
+    assert reranker.queries == []
+    assert res.candidates and all(c.rerank_score is None for c in res.candidates)
+    assert res.max_rerank == max(c.point.similarity for c in res.candidates)  # gate on dense similarity
+    assert 1 <= len(res.context) <= 2
+
+
+async def test_reranker_provider_none_gate_keeps_one_chunk_below_tau(
+    settings: Settings, traced: _TracingStore, user_a: TenantContext
+) -> None:
+    strict = settings.model_copy(update={"reranker_provider": "none", "tau_keep": 0.999})
+    res = await _retriever(strict, traced, RecordingReranker()).retrieve(
+        user_a, RetrievalQuery(variants=("urgent passport fee",), context_k=3)
+    )
+    assert len(res.context) == 1  # the relevance gate decides on max_rerank

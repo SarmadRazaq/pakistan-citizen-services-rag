@@ -17,6 +17,7 @@ from app import __version__
 from app.config import Settings
 from app.schemas import ComponentHealth, HealthResponse
 
+NVIDIA_CATALOG_URL = "https://integrate.api.nvidia.com/v1"
 ProbeFn = Callable[[], Awaitable[tuple[bool, str | None]]]
 
 
@@ -88,24 +89,48 @@ def _missing(detail: str) -> ProbeFn:
     return check
 
 
-def default_probes(settings: Settings, client: httpx.AsyncClient) -> list[Probe]:
-    key = settings.nvidia_api_key
-    nvidia_check = (
-        _http_probe(
-            client,
-            f"{settings.nvidia_base_url.rstrip('/')}/models",
-            models=True,
-            headers={"Authorization": f"Bearer {key.get_secret_value()}"},
-        )
-        if key is not None and key.get_secret_value()
-        else _missing("NVIDIA_API_KEY is not set")
+def _models_probe(client: httpx.AsyncClient, base_url: str, key: str, missing: str) -> ProbeFn:
+    """`GET {base}/models` with a Bearer key; no key means a failing probe without touching the network."""
+    if not key:
+        return _missing(missing)
+    return _http_probe(
+        client, f"{base_url.rstrip('/')}/models", models=True, headers={"Authorization": f"Bearer {key}"}
     )
-    return [
+
+
+def default_probes(settings: Settings, client: httpx.AsyncClient) -> list[Probe]:
+    """Probe exactly the hosted services this configuration uses."""
+    probes = [
         Probe("qdrant", _http_probe(client, f"{settings.qdrant_url.rstrip('/')}/readyz")),
-        Probe("nvidia_api", nvidia_check),
+        Probe(
+            "llm_api",  # any OpenAI-compatible base: NVIDIA (default), OpenAI, ...
+            _models_probe(client, settings.nvidia_base_url, settings.llm_key, "LLM_API_KEY is not set"),
+        ),
+    ]
+    if settings.embedding_provider == "openai":
+        probes.append(
+            Probe(
+                "openai_embeddings",
+                _models_probe(
+                    client, settings.openai_base_url, settings.openai_key, "OPENAI_API_KEY is not set"
+                ),
+            )
+        )
+    if settings.needs_nvidia_retrieval_key and not settings.llm_is_nvidia:
+        # The LLM probe does not cover NVIDIA retrieval when the LLM lives elsewhere (e.g. OpenAI).
+        probes.append(
+            Probe(
+                "nvidia_retrieval",
+                _models_probe(
+                    client, NVIDIA_CATALOG_URL, settings.nvidia_key, "NVIDIA_RETRIEVAL_API_KEY is not set"
+                ),
+            )
+        )
+    probes.append(
         Probe(
             "ollama",
             _http_probe(client, f"{settings.ollama_base_url.rstrip('/')}/models", models=True),
             required=settings.ollama_required,
-        ),
-    ]
+        )
+    )
+    return probes

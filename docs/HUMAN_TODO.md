@@ -13,6 +13,19 @@ All models except Tesseract OCR now run on NVIDIA's hosted APIs; nothing has bee
 | ☐ | **Retune `TAU_REFUSE`** | 0.3 was set for the local reranker. Run the eval once and pick the threshold from the hosted reranker's scores. |
 | ☐ | **Start the stack in Docker** | Start Docker Desktop, then follow `docs/DEPLOY.md` (`docker compose --profile api up -d --build`). The images have not been built yet. |
 
+## No NVIDIA key? OpenAI first run
+
+NVIDIA's catalog is not offered in Pakistan, so use the OpenAI path instead of the NVIDIA rows below.
+
+| ✓ | Task | How |
+|---|---|---|
+| ☐ | **Create an OpenAI API key and add credit** | platform.openai.com, API keys, then a small prepaid balance. Do not paste the key in chat. |
+| ☐ | **Fill `.env`** | Copy `.env.example` to `.env`, uncomment the "OpenAI setup (no NVIDIA key)" block and put your key in `OPENAI_API_KEY=`. Comment out the NVIDIA lines it replaces. |
+| ☐ | **Check the setup** | `.venv\Scripts\python scripts\check_models.py --probe`. Every configured model must show `OK`; it also tests OpenAI embeddings at 1024 dimensions and lists what it skipped (reranker, jailbreak classifier). |
+| ☐ | **Start from a fresh Qdrant collection** | Embeddings changed from BGE-M3 to OpenAI, so old vectors are unusable: delete the collection (or the Qdrant volume) and run `scripts\seed_corpus.py` again. |
+| ☐ | **Choose the reranker** | `RERANKER_PROVIDER=local` if your laptop GPU runs the BGE reranker, else `none`. Then re-run the eval and re-tune `TAU_KEEP` / `TAU_REFUSE` (they were set for NVIDIA reranker scores; with `none` they apply to dense similarity). |
+| ☐ | **Fill `MODEL_PRICES`** | Copy the current prices from openai.com/api/pricing so the dashboard shows real cost per question. |
+
 ## Today, before ingestion (blocks the MVP)
 
 | ✓ | Task | How | Why |

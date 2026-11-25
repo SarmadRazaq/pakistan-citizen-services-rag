@@ -23,7 +23,7 @@ async def test_live(client: httpx.AsyncClient) -> None:
 
 
 async def test_ready_ok_when_required_up(make_app: Callable[..., FastAPI]) -> None:
-    app = make_app([ok_probe("qdrant"), ok_probe("nvidia_api"), down_probe("ollama", required=False)])
+    app = make_app([ok_probe("qdrant"), ok_probe("llm_api"), down_probe("ollama", required=False)])
     async with _client(app) as c:
         r = await c.get("/health/ready")
     assert r.status_code == 200
@@ -31,13 +31,13 @@ async def test_ready_ok_when_required_up(make_app: Callable[..., FastAPI]) -> No
 
 
 async def test_ready_503_when_required_down(make_app: Callable[..., FastAPI]) -> None:
-    app = make_app([ok_probe("qdrant"), down_probe("nvidia_api")])
+    app = make_app([ok_probe("qdrant"), down_probe("llm_api")])
     async with _client(app) as c:
         r = await c.get("/health/ready")
     assert r.status_code == 503
     body = r.json()
     assert body["status"] == "unavailable"
-    assert {c["name"]: c["ok"] for c in body["components"]} == {"qdrant": True, "nvidia_api": False}
+    assert {c["name"]: c["ok"] for c in body["components"]} == {"qdrant": True, "llm_api": False}
 
 
 async def test_missing_nvidia_key_makes_readiness_fail_without_network() -> None:
@@ -49,9 +49,9 @@ async def test_missing_nvidia_key_makes_readiness_fail_without_network() -> None
     settings = Settings(_env_file=None, nvidia_api_key=None)  # type: ignore[call-arg]
     async with _httpx.AsyncClient() as client:
         probes = {p.name: p for p in default_probes(settings, client)}
-        ok, detail = await probes["nvidia_api"].check()
+        ok, detail = await probes["llm_api"].check()
     assert not ok
-    assert detail == "NVIDIA_API_KEY is not set"
+    assert detail == "LLM_API_KEY is not set"
     assert HealthService  # imported for type completeness
 
 

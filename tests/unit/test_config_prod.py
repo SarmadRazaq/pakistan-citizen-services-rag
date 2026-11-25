@@ -27,7 +27,7 @@ def test_valid_prod_config_passes() -> None:
     [
         ({"jwt_secret": "change-me-in-.env"}, "JWT_SECRET is still the default"),
         ({"jwt_secret": "short"}, "JWT_SECRET must be at least 32"),
-        ({"nvidia_api_key": None}, "NVIDIA_API_KEY"),
+        ({"nvidia_api_key": None}, "LLM_API_KEY"),
         ({"cors_origins": []}, "CORS_ORIGINS must not be empty"),
         ({"cors_origins": ["*"]}, "CORS_ORIGINS must not contain"),
         ({"log_question_text": True}, "LOG_QUESTION_TEXT"),
@@ -45,7 +45,7 @@ def test_all_problems_are_listed_without_secret_values() -> None:
     with pytest.raises(ValueError) as exc:
         prod(jwt_secret="tiny-secret", nvidia_api_key=None, cors_origins=["*"], log_question_text=True)
     message = str(exc.value)
-    for fragment in ("JWT_SECRET", "NVIDIA_API_KEY", "CORS_ORIGINS", "LOG_QUESTION_TEXT"):
+    for fragment in ("JWT_SECRET", "LLM_API_KEY", "CORS_ORIGINS", "LOG_QUESTION_TEXT"):
         assert fragment in message
     assert "tiny-secret" not in message
 
