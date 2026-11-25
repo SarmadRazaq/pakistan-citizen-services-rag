@@ -8,6 +8,7 @@ from collections.abc import Sequence
 import pytest
 
 from app.config import Settings
+from app.core.eval_overrides import EvalOverrides
 from app.core.ids import point_id
 from app.core.tenancy import Role, Scope, TenantContext
 from app.protocols import (
@@ -272,3 +273,90 @@ async def test_empty_inputs(settings: Settings, store: InMemoryVectorStore, user
     assert empty.candidates == () and empty.context == () and empty.max_rerank is None
     nothing = await retriever.retrieve(user_a, RetrievalQuery(variants=("no documents yet",)))
     assert nothing.candidates == () and nothing.max_rerank is None
+
+
+# ---------------------------------------------------------------- eval overrides (X-Eval-Config)
+
+
+class _TracingStore(InMemoryVectorStore):
+    """Records the `mode` of every search."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.modes: list[str] = []
+
+    async def hybrid_search(self, ctx, query, **kwargs):  # type: ignore[no-untyped-def,override]
+        self.modes.append(kwargs.get("mode", "hybrid"))
+        return await super().hybrid_search(ctx, query, **kwargs)
+
+
+@pytest.fixture
+async def traced(admin: TenantContext) -> _TracingStore:
+    store = _TracingStore()
+    await _add(
+        store,
+        admin,
+        PUBLIC,
+        "d1",
+        ["urgent passport fee is Rs 9,000", "cnic renewal at nadra centre", "driving licence rules"],
+    )
+    return store
+
+
+def _ovr(**kw: object) -> RetrievalQuery:
+    return RetrievalQuery(
+        variants=("urgent passport fee",),
+        overrides=EvalOverrides(**kw),  # type: ignore[arg-type]
+        context_k=2,
+    )
+
+
+async def test_default_query_is_hybrid_and_reranked(
+    settings: Settings, traced: _TracingStore, user_a: TenantContext
+) -> None:
+    reranker = RecordingReranker()
+    res = await _retriever(settings, traced, reranker).retrieve(
+        user_a, RetrievalQuery(variants=("urgent passport fee",))
+    )
+    assert traced.modes == ["hybrid"] and reranker.queries
+    assert all(c.rerank_score is not None for c in res.candidates)
+
+
+@pytest.mark.parametrize("mode", ["dense", "sparse"])
+async def test_single_leg_modes_are_forwarded_to_the_store(
+    settings: Settings, traced: _TracingStore, user_a: TenantContext, mode: str
+) -> None:
+    res = await _retriever(settings, traced).retrieve(user_a, _ovr(retrieval_mode=mode))
+    assert traced.modes == [mode] and res.candidates
+
+
+async def test_fake_store_dense_skips_sparse_and_sparse_skips_dense(
+    traced: _TracingStore, user_a: TenantContext
+) -> None:
+    emb = await FakeEmbedder().embed_query("urgent passport fee")
+    kw = {"filters": SearchFilters(), "prefetch_k": 10, "limit": 10}
+    dense = await traced.hybrid_search(user_a, emb, mode="dense", **kw)
+    sparse = await traced.hybrid_search(user_a, emb, mode="sparse", **kw)
+    assert [p.similarity for p in dense] == sorted((p.similarity for p in dense), reverse=True)
+    assert [p.sparse_score for p in sparse] == sorted((p.sparse_score or 0 for p in sparse), reverse=True)
+    assert all(p.rrf_score is None for p in dense + sparse)
+
+
+async def test_rerank_false_skips_reranker_and_gates_on_dense_similarity(
+    settings: Settings, traced: _TracingStore, user_a: TenantContext
+) -> None:
+    reranker = RecordingReranker()
+    res = await _retriever(settings, traced, reranker).retrieve(user_a, _ovr(rerank=False))
+    assert reranker.queries == []
+    assert res.candidates and all(c.rerank_score is None for c in res.candidates)
+    assert res.max_rerank == max(c.point.similarity for c in res.candidates)
+    assert 1 <= len(res.context) <= 2
+    assert [c.rank for c in res.candidates] == list(range(1, len(res.candidates) + 1))
+
+
+async def test_rerank_false_keeps_at_least_one_context_chunk(
+    settings: Settings, traced: _TracingStore, user_a: TenantContext
+) -> None:
+    strict = settings.model_copy(update={"tau_keep": 0.999})
+    res = await _retriever(strict, traced).retrieve(user_a, _ovr(rerank=False))
+    assert len(res.context) == 1  # the relevance gate decides on max_rerank

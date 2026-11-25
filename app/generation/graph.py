@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 
 from app.config import Settings
 from app.core.errors import AppError, ErrorCode
+from app.core.eval_overrides import EvalOverrides
 from app.core.tenancy import TenantContext
 from app.db.models import Document
 from app.db.session import Database
@@ -82,6 +83,7 @@ class AskState(TypedDict, total=False):
     # inputs
     ctx: TenantContext
     request: AskRequest
+    overrides: EvalOverrides | None  # eval-only (X-Eval-Config); None in normal serving
     # accumulated
     flags: Annotated[list[str], operator.add]
     timings: Annotated[dict[str, int], _sum_timings]
@@ -237,6 +239,7 @@ def build_graph(deps: PipelineDeps) -> Any:
                 filters=SearchFilters(doc_ids=doc_ids, agencies=agencies, jurisdictions=places),
                 candidates_k=settings.candidates_k,
                 context_k=context_k,
+                overrides=state.get("overrides"),
             )
             return await deps.retriever.retrieve(ctx, query)
 
@@ -313,7 +316,16 @@ def build_graph(deps: PipelineDeps) -> Any:
             )
         else:
             messages = base
-        reply = await llm.complete(messages, purpose="generate", max_tokens=GENERATE_MAX_TOKENS)
+        overrides = state.get("overrides")
+        if overrides and overrides.generation_model:  # eval-only: restrict the chain to that model
+            reply = await llm.complete(
+                messages,
+                purpose="generate",
+                max_tokens=GENERATE_MAX_TOKENS,
+                model=overrides.generation_model,
+            )
+        else:
+            reply = await llm.complete(messages, purpose="generate", max_tokens=GENERATE_MAX_TOKENS)
         return update | {
             "base_messages": base,
             "raw": reply.text,

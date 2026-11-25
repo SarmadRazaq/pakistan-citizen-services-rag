@@ -129,7 +129,9 @@ class LLMRouter:
     Disk response cache (eval only): enabled only when the router is constructed with `cache=True`
     **and** `RESPONSE_CACHE=eval_only`. The serving app must never construct it with `cache=True`:
     the key has no tenant component, so a cached answer built from one user's documents could be
-    served to another (§5.8.5, E37). Degraded (Ollama) answers are never cached, so a bad network
+    served to another (§5.8.5, E37). The key includes the chain, so an `X-Eval-Config`
+    `generation_model` override (a one-model chain) never shares an entry with the default chain
+    or with another model. Degraded (Ollama) answers are never cached, so a bad network
     day cannot leak fallback answers into published eval numbers.
     """
 
@@ -170,7 +172,8 @@ class LLMRouter:
     def has_hosted(self) -> bool:
         return bool(self._api_key) and not self._local_only
 
-    def chain(self, purpose: Purpose) -> list[_Target]:
+    def chain(self, purpose: Purpose, model: str | None = None) -> list[_Target]:
+        """`model` (eval override, `generate` only): the hosted part of the chain is just that model."""
         local = _Target("ollama", self._settings.local_fallback_model)
         if self._local_only:
             return [local]
@@ -183,6 +186,8 @@ class LLMRouter:
                 "judge": [s.judge_model],
             }[purpose]
             hosted = _dedupe(names)
+            if model and purpose == "generate":
+                hosted = [model]
         targets = [_Target("nvidia", m) for m in hosted]
         if purpose != "judge" and self._settings.local_fallback_enabled:
             targets.append(local)
@@ -201,8 +206,9 @@ class LLMRouter:
         purpose: Purpose,
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        model: str | None = None,
     ) -> LLMResult:
-        chain = self.chain(purpose)
+        chain = self.chain(purpose, model)
         cache_path = self._cache_path(chain, messages, max_tokens, temperature)
         if cache_path is not None:
             cached = self._cache_read(cache_path)

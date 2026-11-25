@@ -22,7 +22,7 @@ import dataclasses
 import math
 from collections.abc import Awaitable, Iterable, Sequence
 from datetime import UTC, date, datetime
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import httpx
 import structlog
@@ -514,8 +514,12 @@ class TenantScopedVectorStore:
         filters: SearchFilters,
         prefetch_k: int,
         limit: int,
+        mode: Literal["hybrid", "dense", "sparse"] = "hybrid",
     ) -> list[ScoredPoint]:
         """Dense + sparse prefetch, server-side RRF, tenant filter on both legs (§3.6).
+
+        `mode` (eval override) searches one leg only: `dense` or `sparse` query that named vector
+        directly with the same tenant filter and return no fused `rrf_score`.
 
         `similarity` is the dense cosine between the query and *every* returned point (sparse-only hits
         included), computed locally from the returned dense vector. `sparse_score` is the exact sparse
@@ -527,21 +531,18 @@ class TenantScopedVectorStore:
             return []
         flt = self._read_filter(ctx, "hybrid_search", conditions)
         prefetch_limit = max(1, prefetch_k)  # each leg returns prefetch_k; the fused list is cut to limit
-        prefetch = [models.Prefetch(query=list(query.dense), using=DENSE, filter=flt, limit=prefetch_limit)]
-        if query.sparse.indices:
-            prefetch.append(
-                models.Prefetch(
-                    query=models.SparseVector(
-                        indices=list(query.sparse.indices), values=list(query.sparse.values)
-                    ),
-                    using=SPARSE,
-                    filter=flt,
-                    limit=prefetch_limit,
+        sparse_query = models.SparseVector(
+            indices=list(query.sparse.indices), values=list(query.sparse.values)
+        )
+        if mode == "hybrid":
+            prefetch = [
+                models.Prefetch(query=list(query.dense), using=DENSE, filter=flt, limit=prefetch_limit)
+            ]
+            if query.sparse.indices:
+                prefetch.append(
+                    models.Prefetch(query=sparse_query, using=SPARSE, filter=flt, limit=prefetch_limit)
                 )
-            )
-        response = await self._guard(
-            "hybrid_search",
-            self._client.query_points(
+            request = self._client.query_points(
                 collection_name=self.alias,
                 prefetch=prefetch,
                 query=models.FusionQuery(fusion=models.Fusion.RRF),
@@ -549,8 +550,20 @@ class TenantScopedVectorStore:
                 with_payload=True,
                 with_vectors=[DENSE, SPARSE],
                 limit=limit,
-            ),
-        )
+            )
+        else:
+            if mode == "sparse" and not query.sparse.indices:
+                return []
+            request = self._client.query_points(
+                collection_name=self.alias,
+                query=list(query.dense) if mode == "dense" else sparse_query,
+                using=DENSE if mode == "dense" else SPARSE,
+                query_filter=flt,
+                with_payload=True,
+                with_vectors=[DENSE, SPARSE],
+                limit=limit,
+            )
+        response = await self._guard("hybrid_search", request)
         out: list[ScoredPoint] = []
         for point in response.points:
             raw = point.payload or {}
@@ -574,7 +587,7 @@ class TenantScopedVectorStore:
                     payload=payload_from_qdrant(raw),
                     similarity=similarity,
                     sparse_score=sparse_score,
-                    rrf_score=float(point.score),
+                    rrf_score=float(point.score) if mode == "hybrid" else None,
                 )
             )
         return out

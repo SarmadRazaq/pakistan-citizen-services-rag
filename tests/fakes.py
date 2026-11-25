@@ -110,6 +110,7 @@ class InMemoryVectorStore:
         filters: SearchFilters,
         prefetch_k: int,
         limit: int,
+        mode: Literal["hybrid", "dense", "sparse"] = "hybrid",
     ) -> list[ScoredPoint]:
         self._check(ctx, "hybrid_search")
         self.calls.append("hybrid_search")
@@ -122,13 +123,17 @@ class InMemoryVectorStore:
         ]
         dense = sorted(pool, key=lambda s: -_cos(query.dense, s.point.embedding.dense))[:prefetch_k]
         sparse = sorted(pool, key=lambda s: -_sparse_dot(query.sparse, s.point.embedding.sparse))[:prefetch_k]
-        rrf: dict[str, float] = {}
-        for ranked in (dense, sparse):
-            for rank, s in enumerate(ranked, start=1):
-                rrf[s.point.point_id] = rrf.get(s.point.point_id, 0.0) + 1.0 / (60 + rank)
-        top = sorted(rrf.items(), key=lambda kv: -kv[1])[:limit]
+        rrf: dict[str, float | None] = {}
+        if mode == "hybrid":
+            fused: dict[str, float] = {}
+            for ranked in (dense, sparse):
+                for rank, s in enumerate(ranked, start=1):
+                    fused[s.point.point_id] = fused.get(s.point.point_id, 0.0) + 1.0 / (60 + rank)
+            rrf = dict(sorted(fused.items(), key=lambda kv: -kv[1])[:limit])
+        else:  # a single leg: its own order, no fused score
+            rrf = {s.point.point_id: None for s in (dense if mode == "dense" else sparse)[:limit]}
         out = []
-        for pid, score in top:
+        for pid, score in rrf.items():
             s = self.points[pid]
             out.append(
                 ScoredPoint(
@@ -203,6 +208,7 @@ class FakeLLM:
     replies: list[Reply] = field(default_factory=list)
     default: Reply = '{"answerable": false, "answer": "", "citations": []}'
     seen: list[list[LLMMessage]] = field(default_factory=list)
+    models: list[str | None] = field(default_factory=list)  # the `model` override of each call
     endpoint: Literal["nvidia", "ollama"] = "nvidia"
     model: str = "fake-model"
 
@@ -213,8 +219,10 @@ class FakeLLM:
         purpose: Literal["generate", "helper", "judge"],
         max_tokens: int = 1024,
         temperature: float = 0.0,
+        model: str | None = None,
     ) -> LLMResult:
         self.seen.append(list(messages))
+        self.models.append(model)
         reply = self.replies.pop(0) if self.replies else self.default
         if isinstance(reply, Exception):
             raise reply

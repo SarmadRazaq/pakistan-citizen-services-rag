@@ -1,5 +1,6 @@
 # R5 hybrid_no_rerank: the value of the reranker (hybrid RRF without bge-reranker).
-# NEEDS SERVICE SUPPORT (X-Eval-Config header). Not in the default run: name it with --configs.
+# Sent in the X-Eval-Config header; honoured when EVAL_OVERRIDES_ENABLED=true and the eval account is an
+# admin. Not in the default run: name it with --configs.
 name: R5_hybrid_no_rerank
 description: "Hybrid dense+sparse (RRF), no rerank"
 kind: service

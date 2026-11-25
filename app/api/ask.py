@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, status
 
-from app.api.deps import TenantDep, get_ask_service
+from app.api.deps import EvalOverridesDep, TenantDep, get_ask_service
 from app.api.responses import problems
 from app.schemas import AskRequest, AskResponse, FeedbackOut, FeedbackRequest, SearchRequest, SearchResponse
 
@@ -22,8 +22,10 @@ router = APIRouter(tags=["ask"])
     summary="Full RAG answer with citations and every retrieved chunk (refusals are 200)",
     responses=problems(400, 401, 404, 422, 429, 503),
 )
-async def ask(request: Request, tenant: TenantDep, body: AskRequest) -> AskResponse:
-    return await get_ask_service(request).ask(tenant, body)
+async def ask(
+    request: Request, tenant: TenantDep, body: AskRequest, overrides: EvalOverridesDep
+) -> AskResponse:
+    return await get_ask_service(request).ask(tenant, body, overrides=overrides)
 
 
 @router.post(
@@ -32,8 +34,10 @@ async def ask(request: Request, tenant: TenantDep, body: AskRequest) -> AskRespo
     summary="Retrieval only: ranked chunks with every score",
     responses=problems(401, 404, 422, 503),
 )
-async def search(request: Request, tenant: TenantDep, body: SearchRequest) -> SearchResponse:
-    return await get_ask_service(request).search(tenant, body)
+async def search(
+    request: Request, tenant: TenantDep, body: SearchRequest, overrides: EvalOverridesDep
+) -> SearchResponse:
+    return await get_ask_service(request).search(tenant, body, overrides=overrides)
 
 
 @router.post(

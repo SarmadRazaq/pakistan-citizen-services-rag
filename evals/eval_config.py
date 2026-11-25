@@ -2,9 +2,11 @@
 
 A config sets what the harness can vary **through the public API**:
 - request params: `top_k` (/ask), `search_top_k` (/search), `answer_language`, `scope`;
-- `overrides`: retrieval/generation overrides sent as a JSON `X-Eval-Config` header. The service
-  honours them only once it implements the header (it then echoes `X-Eval-Config-Applied`). Until
-  then the run falls back to the service's default pipeline, and the report flags the config.
+- `overrides`: retrieval/generation overrides sent as a JSON `X-Eval-Config` header (keys `config`,
+  `retrieval_mode`, `rerank`, `generation_model`; see `app/core/eval_overrides.py`). The service honours
+  the header when `EVAL_OVERRIDES_ENABLED=true` **and** the eval account is an admin, and then echoes the
+  applied overrides in `X-Eval-Config-Applied`. Otherwise the run falls back to the service's default
+  pipeline, and the report flags the config as not honoured.
 
 `kind: closed_book` is the contamination baseline: the harness asks the generator model directly via
 the NVIDIA API with **no sources**, and the judge scores it like any other answer.

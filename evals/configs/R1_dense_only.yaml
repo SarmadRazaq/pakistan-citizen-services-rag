@@ -1,8 +1,9 @@
 # R1 dense_only: the naive baseline (blueprint §10.6). Dense BGE-M3 only, no sparse, no reranker.
 #
-# NEEDS SERVICE SUPPORT: the overrides travel in the X-Eval-Config header. Until the service reads it
-# (and echoes X-Eval-Config-Applied), this run falls back to the service defaults, and report.md marks
-# the row "not honoured" so its numbers are not mistaken for a real dense-only measurement.
+# The overrides travel in the X-Eval-Config header. The service honours it when EVAL_OVERRIDES_ENABLED=true
+# and the eval account is an admin (it echoes X-Eval-Config-Applied). Otherwise this run falls back to the
+# service defaults, and report.md marks the row "not honoured" so its numbers are not mistaken for a real
+# dense-only measurement.
 name: R1_dense_only
 description: "Dense retrieval only, no sparse, no rerank"
 kind: service

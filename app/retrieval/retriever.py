@@ -9,6 +9,14 @@
 4. Rerank the top `candidates_k` against the original question (`variants[0]`).
 5. Context = the top `context_k` with `rerank_score ≥ tau_keep`, at least one; `max_rerank` drives the
    relevance gate in the ask pipeline.
+
+Eval overrides (`RetrievalQuery.overrides`, from the `X-Eval-Config` header; absent in normal serving):
+- `retrieval_mode` `dense` / `sparse` searches a single leg (the other leg is never queried);
+- `rerank=false` skips the reranker. Candidates keep the fused order, `rerank_score` is None, and the
+  gate signal changes: `max_rerank` becomes the best **dense cosine similarity** among the candidates
+  and the context keeps the top `context_k` with `similarity ≥ tau_keep` (at least one). `tau_keep` and
+  `tau_refuse` were tuned for reranker scores, so a no-rerank run refuses at different rates than the
+  default; that difference is part of what the comparison measures.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ import structlog
 from rapidfuzz import fuzz
 
 from app.config import Settings
+from app.core.eval_overrides import EvalOverrides
 from app.core.tenancy import TenantContext
 from app.protocols import (
     Candidate,
@@ -138,13 +147,19 @@ class HybridRetriever:
         embeddings = await asyncio.gather(*(self._embedder.embed_query(v) for v in variants))
         latency["embed"] = _ms(t)
 
+        overrides = query.overrides or EvalOverrides()
         candidates_k = max(1, query.candidates_k)
         prefetch_k = max(self._settings.prefetch_k, candidates_k)
         t = time.perf_counter()
         per_variant = await asyncio.gather(
             *(
                 self._store.hybrid_search(
-                    ctx, emb, filters=query.filters, prefetch_k=prefetch_k, limit=candidates_k
+                    ctx,
+                    emb,
+                    filters=query.filters,
+                    prefetch_k=prefetch_k,
+                    limit=candidates_k,
+                    **({} if overrides.retrieval_mode == "hybrid" else {"mode": overrides.retrieval_mode}),
                 )
                 for emb in embeddings
             )
@@ -163,25 +178,38 @@ class HybridRetriever:
         )
         top = unique[:candidates_k]
 
+        # `gate_scores` is what the relevance gate and the context cut compare with tau_keep / tau_refuse:
+        # the reranker scores, or (rerank=false, eval only) the dense cosine similarity.
         t = time.perf_counter()
-        scores = await self._reranker.rerank(variants[0], [p.payload.text for p in top]) if top else []
+        if overrides.rerank:
+            scores = await self._reranker.rerank(variants[0], [p.payload.text for p in top]) if top else []
+            if len(scores) != len(top):
+                raise RuntimeError("reranker returned a different number of scores than passages")
+            gate_scores = scores
+            order = sorted(range(len(top)), key=lambda i: (-scores[i], i))
+        else:
+            scores = []
+            gate_scores = [p.similarity for p in top]
+            order = list(range(len(top)))  # keep the fused (or single-leg) order
         latency["rerank"] = _ms(t)
-        if len(scores) != len(top):
-            raise RuntimeError("reranker returned a different number of scores than passages")
 
-        order = sorted(range(len(top)), key=lambda i: (-scores[i], i))
         context_k = max(1, query.context_k)
         context_idx: set[int] = set()
         for i in order:
             if len(context_idx) >= context_k:
                 break
-            if scores[i] >= self._settings.tau_keep:
+            if gate_scores[i] >= self._settings.tau_keep:
                 context_idx.add(i)
         if not context_idx and order:
             context_idx.add(order[0])  # at least one chunk; the relevance gate decides on max_rerank
 
         candidates = tuple(
-            Candidate(point=top[i], rank=rank, rerank_score=scores[i], used_in_context=i in context_idx)
+            Candidate(
+                point=top[i],
+                rank=rank,
+                rerank_score=scores[i] if overrides.rerank else None,
+                used_in_context=i in context_idx,
+            )
             for rank, i in enumerate(order, start=1)
         )
         context = tuple(c for c in candidates if c.used_in_context)
@@ -189,6 +217,6 @@ class HybridRetriever:
         return RetrievalResult(
             candidates=candidates,
             context=context,
-            max_rerank=scores[order[0]] if order else None,
+            max_rerank=max(gate_scores) if gate_scores else None,
             latency_ms=latency,
         )

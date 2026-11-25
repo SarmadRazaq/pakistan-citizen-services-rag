@@ -12,6 +12,8 @@ The plan is `PROJECT_BLUEPRINT.md` §10. Every table between `<!-- EVAL:START �
 # 2. an eval account exists; its credentials come from the environment, never from git
 $env:EVAL_EMAIL = "eval@example.com"; $env:EVAL_PASSWORD = "<the eval account password>"
 # 3. NVIDIA_API_KEY is in .env (judge + closed-book baseline)
+# 4. the service runs with EVAL_OVERRIDES_ENABLED=true and the eval account is an ADMIN; otherwise the
+#    X-Eval-Config header is ignored and R1/R5/G2 are reported as "NOT honoured"
 .\.venv\Scripts\python -m evals.run --split test                 # approved items, default configs
 .\.venv\Scripts\python -m evals.run --include-drafts --split all # while the golden set is in draft
 .\.venv\Scripts\python -m evals.run --offline --split test       # re-score from the caches only
@@ -67,18 +69,24 @@ Configs live in `evals/configs/*.yaml` (blueprint §10.6). Winner rule, fixed be
 | Config | What it changes | Needs service support? |
 |---|---|---|
 | `R4_hybrid_rerank` (**baseline**) | nothing: the service defaults (hybrid dense+sparse, RRF, rerank) | no |
-| `R1_dense_only` | `X-Eval-Config: {"retrieval_mode":"dense","rerank":false}` | **yes** |
-| `R5_hybrid_no_rerank` (opt-in) | `X-Eval-Config: {"retrieval_mode":"hybrid","rerank":false}` | **yes** |
-| `G2_qwen3_generator` (opt-in) | `X-Eval-Config: {"generation_model":"qwen/qwen3-235b-a22b"}` | **yes** |
+| `R1_dense_only` | `X-Eval-Config: {"retrieval_mode":"dense","rerank":false}` | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
+| `R5_hybrid_no_rerank` (opt-in) | `X-Eval-Config: {"retrieval_mode":"hybrid","rerank":false}` | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
+| `G2_qwen3_generator` (opt-in) | `X-Eval-Config: {"generation_model":"qwen/qwen3-235b-a22b"}` | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
 | `CB_closed_book` | generator answers with no sources, called directly by the harness | no |
 
-**Service-side support.** Overrides travel as a JSON `X-Eval-Config` request header on `/search` and
-`/ask`. To honour them, the service (eval mode only, e.g. `RESPONSE_CACHE=eval_only` and an admin
-caller) reads the keys it supports (`retrieval_mode`, `rerank`, `query_variants`, `decompose`,
-`metadata_filter`, `collection`, `generation_model`) and echoes the applied ones in an
-`X-Eval-Config-Applied` response header. Until then the harness **falls back** to what the service
-supports: the request still runs on the service defaults, and the row is marked "NOT honoured" so it is
-never mistaken for a real measurement. The request params (`top_k`, `answer_language`, `scope`) work today.
+**Service-side support.** Overrides travel as a compact JSON `X-Eval-Config` request header on `/search`
+and `/ask`. The service honours it only when `EVAL_OVERRIDES_ENABLED=true` (default false) and the caller
+is an admin; for anyone else the header is ignored. Supported keys: `config` (label), `retrieval_mode`
+(`dense` | `sparse` | `hybrid`), `rerank` (bool) and `generation_model` (must be in `GENERATION_MODELS`;
+the generate call then uses only that model). Invalid values are a 422 `validation_failed`; applied
+overrides are echoed in `X-Eval-Config-Applied`. When a service is not configured this way the harness
+**falls back** to the defaults and marks the row "NOT honoured", so it is never mistaken for a real
+measurement. The request params (`top_k`, `answer_language`, `scope`) always work.
+
+**Relevance gate without the reranker.** `tau_keep` and `tau_refuse` are tuned for reranker scores. With
+`rerank=false` the retrieved chunks keep their fused order, `rerank_score` is null, and both the context cut
+(`tau_keep`) and the refusal gate (`tau_refuse`) use the best dense cosine similarity instead. Refusal and
+context rates therefore differ from the default pipeline, which is part of what R1 and R5 measure.
 
 <!-- EVAL:START config_comparison -->
 _Not run yet._
