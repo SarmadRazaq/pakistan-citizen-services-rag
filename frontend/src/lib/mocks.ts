@@ -12,6 +12,7 @@ import type {
   DocumentMetadata,
   DocumentOut,
   LanguageCode,
+  MetricsSummary,
   Notice,
   Problem,
   RetrievedChunk,
@@ -723,5 +724,24 @@ export const mockApi: Api = {
     // The canned responses ignore scope/province filters; the real backend applies them.
     const picked = pickAnswer(body);
     return { ...picked, request_id: `${picked.request_id.slice(0, 14)}${Date.now().toString(36).toUpperCase().slice(-6)}` };
+  },
+  async metrics(window) {
+    await sleep(250);
+    const admin = MOCK_ROLE === "admin";
+    const summary: MetricsSummary = {
+      window,
+      scope: admin ? "global" : "own",
+      requests: window === "1h" ? 12 : window === "24h" ? 148 : 903,
+      p50_latency_ms: 2400,
+      p95_latency_ms: 6800,
+      avg_input_tokens: 2150,
+      avg_output_tokens: 310,
+      cost_per_question_usd: 0,
+      list_price_per_question_usd: 0.0021,
+      error_rate: 0.014,
+      fallback_rate: 0.03,
+      provider_mix: admin ? { "deepseek-ai/deepseek-v3.1": 120, "meta/llama-3.3-70b-instruct": 22 } : null,
+    };
+    return summary;
   },
 };
