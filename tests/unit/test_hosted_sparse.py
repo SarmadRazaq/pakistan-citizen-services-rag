@@ -131,6 +131,18 @@ def test_urdu_and_ascii_digits_share_an_index(enc: LexicalSparseEncoder) -> None
     assert enc.encode_query("۲۰۲۵") == enc.encode_query("2025") == enc.encode_query("٢٠٢٥")
 
 
+@pytest.mark.parametrize("written", ["Rs 4,500", "Rs. 4500", "روپے ۴٬۵۰۰", "Rs ۴,۵۰۰"])
+def test_digit_group_separators_do_not_split_amounts(enc: LexicalSparseEncoder, written: str) -> None:
+    amount = set(enc.encode_query("4500").indices)
+    assert amount <= set(enc.encode_document(written).indices)
+
+
+def test_lakh_grouping_and_lists_of_numbers(enc: LexicalSparseEncoder) -> None:
+    assert set(enc.encode_query("100000").indices) <= set(enc.encode_document("Rs 1,00,000").indices)
+    # single-digit lists are not amounts: "1,2,3" stays three tokens
+    assert len(enc.encode_query("pages 1,2,3").indices) == 4
+
+
 def test_diacritics_do_not_change_the_index(enc: LexicalSparseEncoder) -> None:
     plain = "پاسپورٹ فیس"
     marked = "پاسپورٹ فِیس"  # kasra on the first letter of the second word

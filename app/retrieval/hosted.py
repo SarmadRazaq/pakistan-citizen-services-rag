@@ -61,9 +61,15 @@ _STOPWORDS_URDU = (
 )
 
 
+# A digit-group separator between digits: "4,500", "1,00,000" (lakh grouping), "۴٬۵۰۰" (Arabic separator).
+# Dropping it makes "Rs 4,500" in a fee table and "4500" in a question the same token.
+_DIGIT_GROUP_SEP = re.compile(r"(?<=\d)[,٬](?=\d{2,3}(?!\d))")
+
+
 def _normalise(text: str) -> str:
     text = unify_urdu(unicodedata.normalize("NFKC", text))
-    return strip_diacritics(normalize_digits(text)).casefold()
+    text = _DIGIT_GROUP_SEP.sub("", normalize_digits(text))
+    return strip_diacritics(text).casefold()
 
 
 _STOPWORDS = frozenset(
