@@ -62,7 +62,7 @@ class InputGuardResult:
 
 def build_injection_classifier(settings: Settings) -> InjectionClassifier | None:
     """The hosted NemoGuard jailbreak classifier, or None (provider `none`, or no NVIDIA key)."""
-    if settings.injection_provider != "nvidia" or settings.nvidia_api_key is None:
+    if settings.injection_provider != "nvidia" or not settings.nvidia_key:
         return None
     from app.retrieval.hosted import NvidiaJailbreakClassifier
 

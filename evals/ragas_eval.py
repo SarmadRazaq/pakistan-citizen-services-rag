@@ -53,7 +53,7 @@ def _evaluate(
         )
     if not samples:
         return {"n": 0}
-    key = settings.nvidia_api_key.get_secret_value() if settings.nvidia_api_key else None
+    key = settings.llm_key or None
     llm = LangchainLLMWrapper(
         ChatOpenAI(model=settings.judge_model, base_url=settings.nvidia_base_url, api_key=key, temperature=0)
     )

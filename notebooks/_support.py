@@ -51,11 +51,10 @@ OFFLINE_BANNER = "offline mode: fake embeddings - run with NVIDIA_API_KEY for re
 
 
 def hosted_mode() -> bool:
-    """True when NVIDIA_API_KEY is set (environment or .env, read through the app's Settings)."""
+    """True when an LLM key is set (LLM_API_KEY, NVIDIA_API_KEY or OPENAI_API_KEY; env or .env)."""
     if os.environ.get("RAG_NOTEBOOKS_OFFLINE") == "1":  # force the fakes even when a key is configured
         return False
-    key = Settings().nvidia_api_key
-    return bool(key and key.get_secret_value().strip())
+    return bool(Settings().llm_key)
 
 
 def banner() -> str:

@@ -2,7 +2,8 @@
 
 The embedder and reranker are hosted on the NVIDIA API catalog by default (`EMBEDDING_PROVIDER` /
 `RERANKER_PROVIDER` = nvidia) and run locally (BGE-M3, bge-reranker-v2-m3 on the shared GPU worker)
-when set to `local`; the two providers are chosen independently.
+when set to `local`; the two providers are chosen independently. `EMBEDDING_PROVIDER=openai` uses OpenAI
+embeddings; `RERANKER_PROVIDER=none` builds no reranker (the retriever gates on dense similarity).
 
     bundle = build_retrieval(settings)
     await bundle.startup(warmup=True)   # in the FastAPI lifespan
@@ -28,8 +29,8 @@ from app.core.health import Probe
 from app.protocols import Embedder, Reranker
 from app.retrieval.embedder import BGEM3Embedder
 from app.retrieval.gpu import GpuWorker
-from app.retrieval.hosted import NvidiaEmbedder, NvidiaReranker
-from app.retrieval.reranker import BGEReranker
+from app.retrieval.hosted import NvidiaEmbedder, NvidiaReranker, OpenAIEmbedder
+from app.retrieval.reranker import BGEReranker, NoReranker
 from app.retrieval.retriever import HybridRetriever
 from app.retrieval.vector_store import TenantScopedVectorStore
 
@@ -81,17 +82,23 @@ def build_retrieval(
     embedding_cache_dir: Path | None = None,
 ) -> RetrievalBundle:
     worker = GpuWorker(settings.gpu_max_concurrent)
-    embedder: Embedder = (
-        NvidiaEmbedder(settings)
-        if settings.embedding_provider == "nvidia"
-        else BGEM3Embedder(settings, worker, cache_dir=embedding_cache_dir)
-    )
+    embedder: Embedder
+    if settings.embedding_provider == "nvidia":
+        embedder = NvidiaEmbedder(settings)
+    elif settings.embedding_provider == "openai":
+        embedder = OpenAIEmbedder(settings)
+    else:
+        embedder = BGEM3Embedder(settings, worker, cache_dir=embedding_cache_dir)
     store = TenantScopedVectorStore.from_settings(
         settings, dense_dim=embedder.dimension, location=qdrant_location
     )
-    reranker: Reranker = (
-        NvidiaReranker(settings) if settings.reranker_provider == "nvidia" else BGEReranker(settings, worker)
-    )
+    reranker: Reranker
+    if settings.reranker_provider == "nvidia":
+        reranker = NvidiaReranker(settings)
+    elif settings.reranker_provider == "none":
+        reranker = NoReranker()
+    else:
+        reranker = BGEReranker(settings, worker)
     retriever = HybridRetriever(settings, embedder, store, reranker)
     return RetrievalBundle(
         embedder=embedder,

@@ -180,8 +180,10 @@ class HybridRetriever:
 
         # `gate_scores` is what the relevance gate and the context cut compare with tau_keep / tau_refuse:
         # the reranker scores, or (rerank=false, eval only) the dense cosine similarity.
+        # RERANKER_PROVIDER=none behaves exactly like the rerank=false eval override.
+        do_rerank = overrides.rerank and self._settings.reranker_provider != "none"
         t = time.perf_counter()
-        if overrides.rerank:
+        if do_rerank:
             scores = await self._reranker.rerank(variants[0], [p.payload.text for p in top]) if top else []
             if len(scores) != len(top):
                 raise RuntimeError("reranker returned a different number of scores than passages")
@@ -207,7 +209,7 @@ class HybridRetriever:
             Candidate(
                 point=top[i],
                 rank=rank,
-                rerank_score=scores[i] if overrides.rerank else None,
+                rerank_score=scores[i] if do_rerank else None,
                 used_in_context=i in context_idx,
             )
             for rank, i in enumerate(order, start=1)

@@ -25,13 +25,13 @@ def test_free_tier_has_list_price_but_no_cost() -> None:
 
 def test_billed_nvidia_counts_and_calls_are_summed() -> None:
     calls = [ModelUsage("small", "nvidia", 2_000_000, 0), ModelUsage("big", "nvidia", 0, 1_000_000)]
-    cost, listed = request_cost(make_settings(model_prices=PRICES, nvidia_billed=True), calls)
+    cost, listed = request_cost(make_settings(model_prices=PRICES, llm_billed=True), calls)
     assert cost == pytest.approx(3.0) and listed == pytest.approx(3.0)
 
 
 def test_local_fallback_is_free_and_unknown_model_ignored() -> None:
     calls = [ModelUsage("big", "ollama", 1_000_000, 0), ModelUsage("mystery", "nvidia", 5, 5)]
-    cost, listed = request_cost(make_settings(model_prices=PRICES, nvidia_billed=True), calls)
+    cost, listed = request_cost(make_settings(model_prices=PRICES, llm_billed=True), calls)
     assert cost == 0.0 and listed == pytest.approx(1.0)
 
 

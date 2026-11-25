@@ -19,7 +19,7 @@ Set at least these in `.env` (the API refuses to start in `prod` otherwise, and 
 
 ```
 APP_ENV=prod
-NVIDIA_API_KEY=nvapi-...
+LLM_API_KEY=nvapi-...                   # NVIDIA default; for OpenAI see "Without an NVIDIA key" below
 JWT_SECRET=<python -c "import secrets; print(secrets.token_urlsafe(48))">   # >= 32 chars
 CORS_ORIGINS=https://rag.example.org      # no *
 LOG_QUESTION_TEXT=false
@@ -39,7 +39,7 @@ Use `QDRANT_API_KEY` (and `QDRANT_URL`) only for Qdrant Cloud; compose sets `QDR
 python scripts/check_models.py --probe
 ```
 
-Confirms the key and that each configured model id exists on the NVIDIA API.
+Confirms the key and that each configured model id exists on the configured endpoint (NVIDIA or OpenAI), and probes exactly the retrieval providers selected; skipped ones are listed.
 
 ## 3. Start
 
@@ -77,7 +77,30 @@ container with the corpus mounted).
 ## Health
 
 - `GET /health/live`: process is up (used by the container healthcheck).
-- `GET /health/ready`: Qdrant and the NVIDIA API are reachable; 503 otherwise. Ollama is optional.
+- `GET /health/ready`: Qdrant and the LLM endpoint (`llm_api`) are reachable, plus `openai_embeddings` when `EMBEDDING_PROVIDER=openai`; 503 otherwise. Ollama is optional.
+
+## Without an NVIDIA key (OpenAI)
+
+NVIDIA's API catalog is not available in every country. Everything can run on an OpenAI key instead: chat
+(`gpt-4.1-mini`, `gpt-4o-mini`), the judge (`gpt-4o`) and embeddings (`text-embedding-3-large`, requested at
+1024 dimensions so the Qdrant collection keeps its size). The reranker runs locally (`RERANKER_PROVIDER=local`,
+needs a GPU) or is switched off (`none`: retrieval gates on dense similarity, as in the `rerank=false` eval
+override; re-tune `TAU_KEEP` / `TAU_REFUSE`). The NemoGuard jailbreak classifier is NVIDIA-only, so set
+`INJECTION_PROVIDER=none` (the heuristic input guards still run).
+
+```
+LLM_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=sk-...        # used for chat and embeddings while LLM_BASE_URL is OpenAI's
+EMBEDDING_PROVIDER=openai
+RERANKER_PROVIDER=none
+INJECTION_PROVIDER=none
+```
+
+The full block (models, prices, rate limit) is in `.env.example` under "OpenAI setup". `LLM_BASE_URL` and
+`LLM_API_KEY` are the neutral names of the old `NVIDIA_BASE_URL` / `NVIDIA_API_KEY`; both spellings work.
+`APP_ENV=prod` then requires the LLM key and, with `EMBEDDING_PROVIDER=openai`, an OpenAI key, and asks for an
+NVIDIA key only if an NVIDIA retrieval provider is still selected. OpenAI usage is billed, so `cost_usd` counts
+it (set `MODEL_PRICES`). Switching embedding provider changes the vectors: use a new collection and re-seed.
 
 ## TLS
 

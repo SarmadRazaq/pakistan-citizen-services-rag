@@ -111,3 +111,19 @@ class BGEReranker:
 
     def unload(self) -> None:
         self._model = None
+
+
+class NoReranker:
+    """Stand-in for `RERANKER_PROVIDER=none`: the retriever never calls it (it gates on dense similarity)."""
+
+    model_name = "none"
+    loaded = True
+
+    async def warmup(self) -> None:
+        return None
+
+    def unload(self) -> None:
+        return None
+
+    async def rerank(self, query: str, passages: Sequence[str]) -> list[float]:
+        raise RuntimeError("RERANKER_PROVIDER=none: the reranker must not be called")

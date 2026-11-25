@@ -148,8 +148,7 @@ class LLMRouter:
     ) -> None:
         self._settings = settings
         self._local_only = local_only
-        key = settings.nvidia_api_key.get_secret_value().strip() if settings.nvidia_api_key else ""
-        self._api_key = key
+        self._api_key = settings.llm_key
         self._client = client or httpx.AsyncClient()
         self._owns_client = client is None
         self._clock = clock
@@ -369,10 +368,14 @@ class LLMRouter:
             body: dict[str, Any] = {
                 "model": target.model,
                 "messages": payload_messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
                 "stream": False,
             }
+            if hosted and self._settings.llm_token_param == "max_completion_tokens":  # noqa: S105
+                # OpenAI reasoning models (gpt-5*, o*): no `max_tokens`, no non-default `temperature`.
+                body["max_completion_tokens"] = max_tokens
+            else:
+                body["max_tokens"] = max_tokens
+                body["temperature"] = temperature
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
             if hosted:

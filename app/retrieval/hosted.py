@@ -1,7 +1,8 @@
-"""Hosted retrieval models on the NVIDIA API catalog: embedder, reranker and jailbreak classifier.
+"""Hosted retrieval models: the NVIDIA embedder, reranker and jailbreak classifier, and the OpenAI embedder.
 
 - `NvidiaEmbedder` calls `baai/bge-m3` (`POST /v1/embeddings`) for the dense vector. The hosted API has
   no sparse output, so the sparse half of every `Embedding` comes from `LexicalSparseEncoder`.
+- `OpenAIEmbedder` calls OpenAI `text-embedding-3-*` (`dimensions` = EMBEDDING_DIMENSION), same sparse half.
 - `NvidiaReranker` calls the NeMo Retriever reranking NIM and turns each logit into a score in [0, 1].
 - `NvidiaJailbreakClassifier` calls NemoGuard jailbreak-detect and implements `InjectionClassifier`.
 
@@ -40,6 +41,7 @@ log = structlog.get_logger(__name__)
 # Module-level defaults (not in Settings).
 MAX_RETRIES = 2
 QUERY_CACHE_SIZE = 2048
+OPENAI_MAX_INPUTS = 2048  # OpenAI's per-request limit on embedding inputs
 RERANK_MAX_PASSAGES = 512  # the reranking NIM accepts at most 512 passages per request
 SPARSE_INDEX_MASK = 0x7FFFFFFF  # 31 bits: valid for Qdrant's unsigned 32-bit sparse indices
 BM25_K1 = 1.2
@@ -120,7 +122,9 @@ class LexicalSparseEncoder:
 
 
 class _HostedClient:
-    """Shared HTTP plumbing for the NVIDIA retrieval endpoints."""
+    """Shared HTTP plumbing for the hosted retrieval endpoints (NVIDIA, OpenAI)."""
+
+    _KEY_NAME = "NVIDIA_API_KEY"
 
     def __init__(
         self,
@@ -130,8 +134,9 @@ class _HostedClient:
         sleep: Sleep = asyncio.sleep,
         rng: random.Random | None = None,
         max_retries: int = MAX_RETRIES,
+        api_key: str | None = None,
     ) -> None:
-        self._key = settings.nvidia_api_key.get_secret_value().strip() if settings.nvidia_api_key else ""
+        self._key = settings.nvidia_key if api_key is None else api_key.strip()
         self._timeout_s = settings.hosted_retrieval_timeout_s
         self._client = client or httpx.AsyncClient()
         self._owns_client = client is None
@@ -146,7 +151,7 @@ class _HostedClient:
     async def _post(self, url: str, body: dict[str, Any], *, model: str) -> Any:
         """POST `body` as JSON and return the decoded response; any failure is DEPENDENCY_UNAVAILABLE."""
         if not self._key:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "NVIDIA_API_KEY is not set.")
+            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, f"{self._KEY_NAME} is not set.")
         headers = {"Authorization": f"Bearer {self._key}", "Accept": "application/json"}
         retries = 0
         while True:
@@ -200,8 +205,12 @@ def _bad_reply() -> AppError:
     return AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "A hosted model returned an unexpected reply.")
 
 
-class NvidiaEmbedder(_HostedClient):
-    """`Embedder` over the hosted BGE-M3: dense from NVIDIA, sparse from `LexicalSparseEncoder`."""
+class _HostedEmbedder(_HostedClient):
+    """Shared `Embedder` logic: batching, query cache, vector validation, lexical sparse half.
+
+    Subclasses set `model_name` and `_url`, and may add body fields (`_extra_body`) or change how the
+    request is sent (`_fetch`).
+    """
 
     def __init__(
         self,
@@ -211,22 +220,19 @@ class NvidiaEmbedder(_HostedClient):
         sparse: LexicalSparseEncoder | None = None,
         sleep: Sleep = asyncio.sleep,
         rng: random.Random | None = None,
+        api_key: str | None = None,
     ) -> None:
-        super().__init__(settings, client=client, sleep=sleep, rng=rng)
-        self.model_name = settings.hosted_embedding_model
+        super().__init__(settings, client=client, sleep=sleep, rng=rng, api_key=api_key)
+        self.model_name = ""
         self.dimension = settings.embedding_dimension
-        self._url = f"{settings.nvidia_base_url.rstrip('/')}/embeddings"
+        self._url = ""
         self._batch_size = max(1, settings.embed_batch_size)
         self._sparse = sparse or LexicalSparseEncoder()
         self._query_cache: OrderedDict[str, Embedding] = OrderedDict()
-        # Asymmetric models (NV-Embed-QA, E5) need `input_type`; symmetric ones such as BGE-M3 may
-        # reject it. Send it first; on a 400/422 retry once without it and remember (like JSON mode
-        # in the LLM router).
-        self._send_input_type = True
 
     @property
     def loaded(self) -> bool:
-        return True  # nothing to load: the model runs on NVIDIA's side
+        return True  # nothing to load: the model runs on the provider's side
 
     async def warmup(self) -> None:
         return None
@@ -234,22 +240,20 @@ class NvidiaEmbedder(_HostedClient):
     def unload(self) -> None:
         return None
 
+    def _extra_body(self) -> dict[str, Any]:
+        return {}
+
+    async def _fetch(self, body: dict[str, Any], input_type: str) -> Any:
+        return await self._post(self._url, body, model=self.model_name)
+
     async def _dense(self, texts: Sequence[str], input_type: str) -> list[tuple[float, ...]]:
         body: dict[str, Any] = {
             "model": self.model_name,
             "input": list(texts),
             "encoding_format": "float",
-            "truncate": "END",
+            **self._extra_body(),
         }
-        if self._send_input_type:
-            try:
-                data = await self._post(self._url, {**body, "input_type": input_type}, model=self.model_name)
-            except _RequestRejectedError:
-                log.info("hosted.embedder_input_type_unsupported", model=self.model_name)
-                self._send_input_type = False
-                data = await self._post(self._url, body, model=self.model_name)
-        else:
-            data = await self._post(self._url, body, model=self.model_name)
+        data = await self._fetch(body, input_type)
         try:
             rows = sorted(data["data"], key=lambda row: row["index"])
             vectors = [tuple(float(v) for v in row["embedding"]) for row in rows]
@@ -281,6 +285,69 @@ class NvidiaEmbedder(_HostedClient):
         if len(self._query_cache) > QUERY_CACHE_SIZE:
             self._query_cache.popitem(last=False)
         return emb
+
+
+class NvidiaEmbedder(_HostedEmbedder):
+    """`Embedder` over the hosted BGE-M3: dense from NVIDIA, sparse from `LexicalSparseEncoder`."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        client: httpx.AsyncClient | None = None,
+        sparse: LexicalSparseEncoder | None = None,
+        sleep: Sleep = asyncio.sleep,
+        rng: random.Random | None = None,
+    ) -> None:
+        super().__init__(settings, client=client, sparse=sparse, sleep=sleep, rng=rng)
+        self.model_name = settings.hosted_embedding_model
+        self._url = f"{settings.nvidia_base_url.rstrip('/')}/embeddings"
+        # Asymmetric models (NV-Embed-QA, E5) need `input_type`; symmetric ones such as BGE-M3 may
+        # reject it. Send it first; on a 400/422 retry once without it and remember (like JSON mode
+        # in the LLM router).
+        self._send_input_type = True
+
+    def _extra_body(self) -> dict[str, Any]:
+        return {"truncate": "END"}
+
+    async def _fetch(self, body: dict[str, Any], input_type: str) -> Any:
+        if self._send_input_type:
+            try:
+                return await self._post(self._url, {**body, "input_type": input_type}, model=self.model_name)
+            except _RequestRejectedError:
+                log.info("hosted.embedder_input_type_unsupported", model=self.model_name)
+                self._send_input_type = False
+        return await self._post(self._url, body, model=self.model_name)
+
+
+class OpenAIEmbedder(_HostedEmbedder):
+    """`Embedder` over OpenAI `POST /embeddings` (text-embedding-3-*): dense from OpenAI, sparse lexical.
+
+    `dimensions` asks the text-embedding-3 models for EMBEDDING_DIMENSION (1024) values, so the Qdrant
+    collection keeps the size it has with BGE-M3. No `input_type` / `truncate`. OpenAI allows 2048
+    inputs per request; EMBED_BATCH_SIZE (32) stays far below that.
+    """
+
+    _KEY_NAME = "OPENAI_API_KEY"
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        client: httpx.AsyncClient | None = None,
+        sparse: LexicalSparseEncoder | None = None,
+        sleep: Sleep = asyncio.sleep,
+        rng: random.Random | None = None,
+    ) -> None:
+        super().__init__(
+            settings, client=client, sparse=sparse, sleep=sleep, rng=rng, api_key=settings.openai_key
+        )
+        self.model_name = settings.openai_embedding_model
+        self._url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
+        self._batch_size = min(self._batch_size, OPENAI_MAX_INPUTS)
+
+    def _extra_body(self) -> dict[str, Any]:
+        return {"dimensions": self.dimension}
 
 
 def _sigmoid(x: float) -> float:
