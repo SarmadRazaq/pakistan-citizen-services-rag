@@ -10,41 +10,85 @@ A multilingual (**English · Urdu · Roman Urdu**) question-answering service fo
 
 Every answer comes only from official documents, with a citation and the document's date. The service gives **information, not legal advice**.
 
-> **Status:** scaffold (work package P0). The API contract, error envelope, tenancy rules and health checks are in place. Ingestion, retrieval, answering, auth and evaluation land in work packages A0–A8 (see `PROJECT_BLUEPRINT.md` §15).
+Built with **FastAPI**, a **LangGraph** answer pipeline, **Qdrant** hybrid search (dense + sparse, RRF, reranking), models hosted on the **NVIDIA API**, and a **Next.js** frontend. Upload a document in the web app and the whole pipeline runs: validate → extract (OCR for scans) → clean → chunk → embed → store. Ask a question and you get a cited answer, the retrieved chunks with their scores, or a clear refusal.
 
 ## Documents in this repo
 
 | File | What it is |
 |---|---|
-| `PROJECT_BLUEPRINT.md` | The design: every decision, edge case and work package |
+| [DESIGN.md](DESIGN.md) | Architecture, flows, and the justification of every design decision |
+| [EVAL.md](EVAL.md) | Golden set, metrics, configuration comparison, failure analysis |
+| [docs/REQUIREMENTS_CHECKLIST.md](docs/REQUIREMENTS_CHECKLIST.md) | Every requirement of the brief and rubric, with where it is met |
+| [GLOSSARY.md](GLOSSARY.md), [docs/adr/](docs/adr/) | Domain terms and hard-to-reverse decisions |
+| [notebooks/](notebooks/) | Step-by-step pipeline notebooks: extraction, chunking, embedding and retrieval, answering |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Production deployment with Docker Compose |
+| `PROJECT_BLUEPRINT.md` | The original design blueprint, with the edge-case catalogue (§9) |
 | `corpus/SEED_SOURCES.md` | Verified official sources and decisions D1–D5 |
 | `corpus/MANUAL_COLLECTION.md` | Checklist for sources that block scripts (NADRA, PM Health, KP Sehat) |
-| `docs/HUMAN_TODO.md` | The prerequisites only the student can do (key, Tesseract, golden set, referrals) |
-| `DESIGN.md`, `EVAL.md`, `AI_USAGE.md` | Written at the end from measured results |
+| `docs/HUMAN_TODO.md` | Steps only the student can do (API key, Tesseract, golden set, referrals) |
 
 ## Setup (Windows, PowerShell)
 
 Prerequisites:
 - Python 3.12 and [uv](https://docs.astral.sh/uv/)
-- Docker Desktop
+- Docker Desktop (for Qdrant)
 - Node 20+ (frontend)
-- **Tesseract with Urdu and English language data**, for OCR
-- an **NVIDIA API key** (build.nvidia.com), for LLM answers
+- **Tesseract with Urdu and English language data**, for OCR of scanned pages
+- an **NVIDIA API key** from [build.nvidia.com](https://build.nvidia.com/models): one key covers the answer models, embeddings, reranker and jailbreak detection
+
+### 1. Backend
 
 ```powershell
 .\scripts\dev.ps1 install      # venv + pinned dependencies
 copy .env.example .env         # then set JWT_SECRET and NVIDIA_API_KEY (never commit .env)
 .\scripts\dev.ps1 qdrant       # Qdrant in Docker, bound to 127.0.0.1:6333
-.\.venv\Scripts\python scripts\check_models.py --probe   # confirms your key and the model ids
-.\scripts\dev.ps1 run          # API on http://127.0.0.1:8000  (docs at /docs)
-.\scripts\dev.ps1 check        # ruff + mypy --strict + pytest
+.\.venv\Scripts\python scripts\check_models.py --probe   # confirms your key and every model id
+.\scripts\dev.ps1 run          # API on http://127.0.0.1:8000  (Swagger UI at /docs)
 ```
 
-On Linux/macOS the same targets exist in the `Makefile` (`make install`, `make check`, …).
+`GET /health/ready` reports each dependency and returns **503** until Qdrant is up and the NVIDIA key works.
 
-Production deployment: see [docs/DEPLOY.md](docs/DEPLOY.md).
+### 2. Admin account and the official corpus
 
-`GET /health/ready` reports each dependency. It returns **503** until Qdrant is up and the NVIDIA key works. Ollama is optional unless `OLLAMA_REQUIRED=true`.
+```powershell
+.\.venv\Scripts\python scripts\create_admin.py admin@example.org      # asks for the password
+.\.venv\Scripts\python scripts\collect_corpus.py                      # downloads the scriptable sources
+.\.venv\Scripts\python scripts\collect_corpus.py --register-manual    # registers files saved by hand
+.\.venv\Scripts\python scripts\seed_corpus.py                         # ingests them as the public corpus
+```
+
+Admins can also upload official documents in the web app (the "Official" switch on the upload panel).
+
+### 3. Frontend
+
+```powershell
+cd frontend
+copy .env.example .env.local   # API_BASE_URL=http://127.0.0.1:8000
+npm install
+npm run dev                    # http://localhost:3000
+```
+
+`NEXT_PUBLIC_USE_MOCKS=1` runs the UI with no backend, from built-in mock data.
+
+### 4. Tests
+
+```powershell
+.\scripts\dev.ps1 check                              # ruff + mypy --strict + pytest
+cd frontend; npm test; npm run typecheck; cd ..      # frontend unit tests and types
+.\.venv\Scripts\python scripts\run_notebooks.py      # re-executes the pipeline notebooks
+```
+
+### 5. Evaluation
+
+One command runs the whole evaluation and saves the results under `evals/results/<timestamp>/`:
+
+```powershell
+.\.venv\Scripts\python -m evals.run --split test
+```
+
+See [EVAL.md](EVAL.md) "How to reproduce" for the eval account, the configurations it compares and the offline re-scoring mode.
+
+On Linux/macOS the same targets exist in the `Makefile` (`make install`, `make check`, `make eval`, …).
 
 ## Repository rules
 
@@ -59,7 +103,7 @@ Production deployment: see [docs/DEPLOY.md](docs/DEPLOY.md).
 - **Private uploads** follow `PRIVATE_CONTEXT_POLICY`:
   - `hosted_with_notice` (default): answers that use your uploaded text are generated through the NVIDIA API, and the answer carries a "processed by a third-party model" notice. The upload screen says so before you upload.
   - `local_only`: answers that use your uploads run on the local Ollama model, so nothing private leaves the machine. Quality is lower, and those answers are marked *degraded*.
-- Embeddings, reranking and the injection classifier always run **locally**.
+- Embeddings, reranking and jailbreak detection also run on the **NVIDIA API** (`EMBEDDING_PROVIDER`, `RERANKER_PROVIDER`, `INJECTION_PROVIDER`). They can be switched to local models; only Tesseract OCR always runs locally.
 - Logs never contain the question text unless `LOG_QUESTION_TEXT=true`. Secrets and CNIC-shaped numbers are redacted.
 
 ## Data sources and licensing
