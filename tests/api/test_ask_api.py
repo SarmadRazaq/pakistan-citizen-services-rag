@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 
 import httpx
@@ -137,3 +138,24 @@ async def test_ask_requires_auth(make_app: Callable[..., FastAPI], world: World)
     async with _client(app) as c:
         r = await c.post("/api/v1/ask", json={"question": "What is the urgent passport fee?"})
     assert r.status_code == 401
+
+
+async def test_concurrent_asks(make_app: Callable[..., FastAPI], user_a: TenantContext) -> None:
+    """E17: ten simultaneous /ask requests: each is 200 (or 429 when limited), never a 5xx."""
+    replies = [
+        reply
+        for _ in range(10)
+        for reply in (helper_reply(), answer_reply("The urgent fee is Rs 9,000 [S1].", [("S1", QUOTE)]))
+    ]
+    w = await make_world(hosted=replies)
+    await add_doc(w, "d_pass", PASSPORT_TEXT, agency="DGIP")
+    app = make_app(tenant=user_a)
+    app.state.ask = w.service
+    async with _client(app) as c:
+        responses = await asyncio.gather(
+            *(c.post("/api/v1/ask", json={"question": "What is the urgent passport fee?"}) for _ in range(10))
+        )
+    assert {r.status_code for r in responses} <= {200, 429}
+    assert not any(r.status_code >= 500 for r in responses)
+    assert any(r.status_code == 200 for r in responses)
+    assert len({r.headers["X-Request-ID"] for r in responses}) == 10

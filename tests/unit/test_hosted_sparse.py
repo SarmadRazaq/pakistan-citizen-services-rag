@@ -122,3 +122,17 @@ def test_query_has_one_entry_per_unique_token(enc: LexicalSparseEncoder) -> None
 def test_roman_urdu_content_words_survive(enc: LexicalSparseEncoder) -> None:
     vec = enc.encode_query("passport ki fee kitni hai")
     assert len(vec.indices) == 3  # passport, fee, kitni
+
+
+def test_urdu_and_ascii_digits_share_an_index(enc: LexicalSparseEncoder) -> None:
+    doc = enc.encode_document("فیس ۲۰۲۵")
+    query = enc.encode_query("fee 2025")
+    assert set(doc.indices) & set(query.indices) == set(enc.encode_query("2025").indices)
+    assert enc.encode_query("۲۰۲۵") == enc.encode_query("2025") == enc.encode_query("٢٠٢٥")
+
+
+def test_diacritics_do_not_change_the_index(enc: LexicalSparseEncoder) -> None:
+    plain = "پاسپورٹ فیس"
+    marked = "پاسپورٹ فِیس"  # kasra on the first letter of the second word
+    assert enc.encode_document(marked) == enc.encode_document(plain)
+    assert enc.encode_query(marked) == enc.encode_query(plain)

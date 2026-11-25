@@ -29,3 +29,10 @@
 | ISSUE-008 | Full R1–R8 / G1–G3 eval grid | P3 | [ISSUE-008](ISSUE-008-full-eval-grid.md) · #9 |
 | ISSUE-009 | Deployment | P3 | [ISSUE-009](ISSUE-009-deployment.md) · #10 |
 | ISSUE-010 | JPG/PNG OCR (D4) | P3 | [ISSUE-010](ISSUE-010-jpg-png-ocr.md) · #11 |
+
+## Missing behaviour (from the B7 audit)
+
+| ID | Item | Priority | Detail |
+|----|------|----------|--------|
+| ISSUE-011 | Background ingestion with 202 and progress (E5, E6) | P2 | [ISSUE-011](ISSUE-011-background-ingestion.md) · #12 |
+| ISSUE-012 | Startup reconciler for crashed ingestion (E29, E41) | P2 | [ISSUE-012](ISSUE-012-ingest-reconciler.md) · #13 |
