@@ -192,3 +192,20 @@ def test_every_pattern_compiles_and_has_an_id(name: str) -> None:
     patterns = load_patterns(name)
     assert patterns and len({p.id for p in patterns}) == len(patterns)
     assert {p.lang for p in patterns} >= {"en", "ur", "roman_ur"}
+
+
+@pytest.mark.parametrize(
+    ("question", "kept"),
+    [
+        ("What is the fee of Rs. 3,000 for passport renewal?", "Rs. 3,000"),
+        ("Is PKR 5000 the urgent passport fee?", "PKR 5000"),
+        ("Is a 20% discount available on the passport fee?", "20%"),
+        ("Passport fee kitni hai? 😀", "😀"),
+        ("۲۰۲۵ میں پاسپورٹ کی فیس کتنی ہے؟", "۲۰۲۵"),
+        ("My CNIC 35202-1234567-1 expired, how do I renew it?", "35202-1234567-1"),
+    ],
+)
+async def test_special_chars_urdu_digits(question: str, kept: str) -> None:
+    result = await check_question(question, max_chars=MAX)
+    assert result.status == "passed"
+    assert kept in result.text

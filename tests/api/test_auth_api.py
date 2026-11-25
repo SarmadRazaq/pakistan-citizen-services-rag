@@ -302,6 +302,37 @@ async def test_demote_admin_bumps_version(world: World, client: httpx.AsyncClien
     assert info.value.code is ErrorCode.LAST_ADMIN
 
 
+async def test_demoted_admin(world: World, client: httpx.AsyncClient) -> None:
+    """E42: `demote_admin` bumps token_version, so the demoted admin's old token is 401 (not 403) on a
+    public upload or delete; a fresh login as the plain user is 403 on both."""
+    await world.auth.create_or_promote_admin("boss@example.org", PASSWORD)
+    await world.auth.create_or_promote_admin("deputy@example.org", PASSWORD)
+    docs = FakeDocumentService({"d_pub1": PUBLIC_OWNER_ID, "d_pub2": PUBLIC_OWNER_ID})
+    world.app.state.documents = docs
+    old = await login(client, "boss@example.org")
+    pdf = {"file": ("a.pdf", b"%PDF-1.4", "application/pdf")}
+
+    # While still an admin the public delete is allowed.
+    assert (await client.delete("/api/v1/documents/d_pub1", headers=bearer(old))).status_code == 204
+
+    await world.auth.demote_admin("boss@example.org")
+
+    upload = await client.post(
+        "/api/v1/documents", headers=bearer(old), files=pdf, data={"visibility": "public"}
+    )
+    assert upload.status_code == 401
+    assert (await client.delete("/api/v1/documents/d_pub2", headers=bearer(old))).status_code == 401
+    assert set(docs.docs) == {"d_pub2"}  # the public Document survived
+
+    fresh = await login(client, "boss@example.org")  # a new token carries the user role
+    upload = await client.post(
+        "/api/v1/documents", headers=bearer(fresh), files=pdf, data={"visibility": "public"}
+    )
+    assert upload.status_code == 403
+    assert (await client.delete("/api/v1/documents/d_pub2", headers=bearer(fresh))).status_code == 403
+    assert set(docs.docs) == {"d_pub2"}
+
+
 async def test_get_tenant_without_auth_service_is_401(make_app: Callable[..., FastAPI]) -> None:
     app = make_app()
     async with httpx.AsyncClient(

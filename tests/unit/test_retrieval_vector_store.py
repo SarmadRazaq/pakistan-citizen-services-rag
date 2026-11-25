@@ -13,9 +13,11 @@ from datetime import date
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from structlog.testing import capture_logs
 
 from app.config import Settings
-from app.core.errors import AppError, ErrorCode, MissingTenantFilterError
+from app.core.errors import AppError, ErrorCode, MissingTenantFilterError, install_error_handlers
 from app.core.ids import point_id
 from app.core.tenancy import Role, Scope, TenantContext, Visibility, system_context
 from app.protocols import ChunkPoint, Embedding, SearchFilters, SparseVector
@@ -173,6 +175,32 @@ async def test_missing_context_raises(store: TenantScopedVectorStore) -> None:
     for call in calls:
         with pytest.raises(MissingTenantFilterError):
             await call
+
+
+async def test_missing_tenant_filter_raises(store: TenantScopedVectorStore) -> None:
+    """E43: no TenantContext -> MissingTenantFilterError (HTTP 500), logged as a security event."""
+    assert ErrorCode.TENANT_FILTER_MISSING.status == 500
+    with capture_logs() as logs, pytest.raises(MissingTenantFilterError) as err:
+        await store.count(None)  # type: ignore[arg-type]
+    assert err.value.code is ErrorCode.TENANT_FILTER_MISSING
+    assert any(
+        e["event"] == "security.tenant_filter_missing" and e["log_level"] == "error" and e["operation"]
+        for e in logs
+    )
+
+    app = FastAPI()
+    install_error_handlers(app)
+
+    @app.get("/boom")
+    async def boom() -> None:
+        await store.count(None)  # type: ignore[arg-type]
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        r = await client.get("/boom")
+    assert r.status_code == 500
+    assert "An internal error occurred." in r.text
+    assert "count" not in r.text  # the operation name is logged, never returned
 
 
 # ---------------------------------------------------------------- search behaviour

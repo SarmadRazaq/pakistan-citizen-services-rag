@@ -382,3 +382,17 @@ def test_add_months_clamps_day() -> None:
     assert add_months(date(2026, 3, 31), -1) == date(2026, 2, 28)
     assert add_months(date(2026, 11, 22), -12) == date(2025, 11, 22)
     assert add_months(date(2026, 1, 15), -13) == date(2024, 12, 15)
+
+
+def test_scope_labels() -> None:
+    official = ContextSource("S1", CHUNK, "public", "DGIP", "federal", "2025-07-01", "fees.pdf", 1)
+    mine = ContextSource("S2", "My own note about the fee.", "private", None, None, None, "note.pdf", 1)
+    prompt = build_user_prompt("What is the fee?", [official, mine])
+    assert 'id="S1" scope="public"' in prompt
+    assert 'id="S2" scope="private"' in prompt
+    system = build_system_prompt(LanguageCode.EN)
+    assert (
+        'The scope attribute is "public" for an official source and "private" for the user\'s own upload'
+        in system
+    )
+    assert 'label them "Official source" and "Your upload"' in system

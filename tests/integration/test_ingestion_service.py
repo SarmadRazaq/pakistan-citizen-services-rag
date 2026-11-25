@@ -335,6 +335,83 @@ async def test_quota_exceeded(
     )
 
 
+async def test_quota_exceeded_bytes_and_chunks(
+    tmp_path: Path, db: Database, store: InMemoryVectorStore, settings: Settings
+) -> None:
+    def build(**limits: int) -> IngestionService:
+        return IngestionService(
+            settings.model_copy(update=limits),
+            db,
+            store,
+            FakeEmbedder(),
+            token_counter=RegexTokenCounter(),
+            ocr=NoOcr(),
+        )
+
+    first = await _upload(build(), USER_A, write(tmp_path / "a.md", markdown(SECTION_TEXT)))
+    assert first.chunk_count > 1
+
+    # Storage bytes: the stored first file plus a file that fills the 1 MB limit goes over it.
+    storage = build(max_storage_mb_per_user=1)
+    big = write(tmp_path / "big.md", markdown(SECTION_TEXT, "Big") + " " * (1024 * 1024))
+    err = await _error(_upload(storage, USER_A, big))
+    assert err.code is ErrorCode.QUOTA_EXCEEDED
+    assert err.detail == "Storage quota reached." and err.extra["limit"] == 1
+
+    # Chunks: the limit equals what A already holds, so any further chunk is refused.
+    chunks = build(max_chunks_per_user=first.chunk_count)
+    other = write(tmp_path / "b.md", markdown(SECTION_TEXT, "Other"))
+    err = await _error(_upload(chunks, USER_A, other))
+    assert err.code is ErrorCode.QUOTA_EXCEEDED and err.detail == "Chunk quota reached."
+    assert err.extra == {"used": first.chunk_count, "limit": first.chunk_count}
+    assert await store.count(USER_A, first.id) == first.chunk_count  # nothing was stored for the refused file
+
+
+async def test_ingest_job_limit(
+    tmp_path: Path, settings: Settings, db: Database, store: InMemoryVectorStore
+) -> None:  # E39
+    class HoldFirstCall(FakeEmbedder):
+        """The first embed call waits on a gate (the job holds its slot); later calls pass."""
+
+        def __init__(self) -> None:
+            self.gate = asyncio.Event()
+            self.entered = asyncio.Event()
+            self.first = True
+
+        async def embed_documents(self, texts: Sequence[str]) -> list[Embedding]:
+            if self.first:
+                self.first = False
+                self.entered.set()
+                await self.gate.wait()
+            return await super().embed_documents(texts)
+
+    embedder = HoldFirstCall()
+    service = IngestionService(
+        settings.model_copy(update={"max_ingest_jobs_per_user": 1}),
+        db,
+        store,
+        embedder,
+        token_counter=RegexTokenCounter(),
+        ocr=NoOcr(),
+    )
+    first = asyncio.create_task(_upload(service, USER_A, write(tmp_path / "a.md", markdown(SECTION_TEXT))))
+    await asyncio.wait_for(embedder.entered.wait(), timeout=10)
+
+    err = await _error(_upload(service, USER_A, write(tmp_path / "b.md", markdown(SECTION_TEXT, "Other"))))
+    assert err.code is ErrorCode.TOO_MANY_INGEST_JOBS and err.code.status == 429
+    assert err.headers == {"Retry-After": "5"} and err.extra == {"limit": 1}
+
+    # Another User is not blocked while A's job holds its slot.
+    other = await _upload(service, USER_B, write(tmp_path / "c.md", markdown(SECTION_TEXT, "Third")))
+    assert other.status == DocumentStatus.READY
+
+    embedder.gate.set()
+    assert (await first).status == DocumentStatus.READY
+    # The slot is released: A can upload again.
+    again = await _upload(service, USER_A, write(tmp_path / "d.md", markdown(SECTION_TEXT, "Fourth")))
+    assert again.status == DocumentStatus.READY
+
+
 async def test_crash_mid_ingest_leaves_no_orphans_and_allows_retry(
     tmp_path: Path, settings: Settings, db: Database, store: InMemoryVectorStore
 ) -> None:  # E29

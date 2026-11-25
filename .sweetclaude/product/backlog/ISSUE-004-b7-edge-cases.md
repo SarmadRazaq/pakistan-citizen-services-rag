@@ -2,7 +2,7 @@
 id: ISSUE-004
 title: 'Remaining B7 edge cases (8 shown)'
 type: net-new-feature
-status: new
+status: done
 created: '2026-11-24T00:00:00+00:00'
 updated: '2026-11-24T00:00:00+00:00'
 priority: P3

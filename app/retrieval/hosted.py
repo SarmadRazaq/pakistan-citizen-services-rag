@@ -32,6 +32,7 @@ from app.config import Settings
 from app.core.errors import AppError, ErrorCode
 from app.core.resilience import Sleep, backoff_delay, parse_retry_after
 from app.guardrails.patterns import unify_urdu
+from app.ingestion.language import normalize_digits, strip_diacritics
 from app.protocols import Embedding, SparseVector
 
 log = structlog.get_logger(__name__)
@@ -61,7 +62,8 @@ _STOPWORDS_URDU = (
 
 
 def _normalise(text: str) -> str:
-    return unify_urdu(unicodedata.normalize("NFKC", text)).casefold()
+    text = unify_urdu(unicodedata.normalize("NFKC", text))
+    return strip_diacritics(normalize_digits(text)).casefold()
 
 
 _STOPWORDS = frozenset(
@@ -74,7 +76,9 @@ _STOPWORDS = frozenset(
 class LexicalSparseEncoder:
     """Deterministic hashed bag-of-words sparse vectors (the sparse half of hosted hybrid search).
 
-    Text is NFKC-normalised, Urdu letter variants are unified (Arabic kaf/yeh/heh), and case is folded.
+    Text is NFKC-normalised, Urdu letter variants are unified (Arabic kaf/yeh/heh),
+    Urdu and Arabic-Indic digits become ASCII, Urdu diacritics are stripped (as ingestion's
+    `normalize_for_index` does), and case is folded.
     Tokens are Unicode word runs; stopwords (English, Roman Urdu, Urdu) and one-character non-digit
     tokens are dropped. A token's index is a 31-bit blake2b hash, so it is identical across processes
     and between Documents and queries. A Chunk weighs each token with BM25-style term-frequency

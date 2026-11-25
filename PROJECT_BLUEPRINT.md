@@ -805,66 +805,66 @@ All 20 fetched candidates are returned, not only the 5 used. The panel can then 
 
 ## 9. Edge-case catalogue
 
-Every row has an automated test and is shown in the demo. † marks cases the brief lists explicitly. B7 needs 8+ cases handled **and shown**.
+Each row names the test that covers it (audited 25 Nov 2026, ISSUE-004); rows marked *golden set* or *not implemented* say what is still open. † marks cases the brief lists explicitly. B7 needs 8+ cases handled **and shown**.
 
 | # | Edge case | Handling | Status / outcome | Test |
 |---|---|---|---|---|
-| E1 † | Scanned PDF (e.g. the Punjab Urdu legal-notice guideline; Mohtasib Urdu Form A), including text drawn as **vector outlines** (Mohtasib Urdu brochure) | per-page OCR `eng+urd` on the **rendered page** (not on extracted images, which misses vector text); if nothing usable → reject | 201 (`is_ocr`) / 400 | `test_scanned_pdf` |
+| E1 † | Scanned PDF (e.g. the Punjab Urdu legal-notice guideline; Mohtasib Urdu Form A), including text drawn as **vector outlines** (Mohtasib Urdu brochure) | per-page OCR `eng+urd` on the **rendered page** (not on extracted images, which misses vector text); if nothing usable → reject | 201 (`is_ocr`) / 400 | `test_scanned_pdf_with_ocr`, `test_scanned_pdf_without_ocr_is_rejected_and_nothing_stored` (fake OCR; real Tesseract on Urdu files is a manual check) |
 | E2 † | Empty PDF / 0-byte file | size + text checks | 400 | `test_empty_file` |
 | E3 † | Same file uploaded twice | SHA-256 unique constraint | 409 + existing id | `test_duplicate_upload` |
 | E4 | Same content, different bytes (re-fetched web page) | `text_sha256` | 409 `duplicate_content` | `test_content_duplicate` |
-| E5 † | Very large file | streaming size check; > sync limit → 202; > cap → 413 | 202 / 413 | `test_large_file_async`, `test_too_large` |
-| E6 † | Very long document (the Constitution, 200+ pages) | page cap, batched GPU embedding, progress reporting | 202 + progress | `test_long_doc_progress` |
-| E7 † | Question before any upload (no readable documents: empty public corpus, or `scope=mine` before the user uploads; see E32) | corpus-check node over readable documents | 200 `no_documents` | `test_ask_empty_corpus` |
-| E8 † | Unanswerable question | relevance gate + `answerable=false` | 200 `insufficient_context` | golden set (8) |
-| E9 † | Question about a deleted document | §5.5 guarantees | never cites the deleted document | `test_deleted_doc_not_retrievable` |
-| E10 † | Contradicting documents (a superseded fee notification vs its amendment; a federal rule vs a provincial one) | freshness rule + prompt rule; both cited with agency and date | newest presented as current, older as superseded | golden set (2) |
-| E11 † | Tables (fee schedules: normal vs urgent, by category) | atomic Markdown table chunks, header repeated on split | correct cell-level answers | golden set (4 table questions) |
-| E12 † | Special characters (Rs., PKR, %, emoji, Urdu digits ۲۰۲۵, CNIC-style `#####-#######-#` patterns in questions) | NFKC + digit normalization | handled | `test_special_chars_urdu_digits` |
-| E13 † | Non-English text in files (Urdu Nastaliq) | detection, Urdu normalization, multilingual embedding | cross-lingual answers | multilingual subset |
-| E14 † | LLM timeout / rate limit / seller offline | per-attempt timeout → next model in the chain → Ollama fallback (`degraded=true`) → 503 | 200 (degraded) / 503 | `test_llm_fallback_chain` (fake endpoints) |
-| E15 † | NVIDIA API unreachable / key missing or invalid / Qdrant down | readiness flips; clear errors | 503 | `test_llm_down_503`, `test_qdrant_down_503` |
-| E16 † | Concurrent uploads of the same file | DB unique constraint | exactly one 201 | `test_concurrent_duplicate_uploads` |
-| E17 † | Many concurrent questions | async I/O, GPU worker queue, semaphores, rate limiter | all complete or 429; no GPU OOM | `test_concurrent_asks` |
+| E5 † | Very large file | streaming size check; > sync limit → 202; > cap → 413 | 202 / 413 | `test_too_large_is_413`; 202 path **not implemented** (ISSUE-011) |
+| E6 † | Very long document (the Constitution, 200+ pages) | page cap, batched GPU embedding, progress reporting | 202 + progress | `test_page_cap`; background progress **not implemented** (ISSUE-011) |
+| E7 † | Question before any upload (no readable documents: empty public corpus, or `scope=mine` before the user uploads; see E32) | corpus-check node over readable documents | 200 `no_documents` | `test_no_documents_for_scope_mine_without_uploads`, `test_other_users_ready_documents_do_not_count` |
+| E8 † | Unanswerable question | relevance gate + `answerable=false` | 200 `insufficient_context` | `test_unanswerable_is_refused_by_the_relevance_gate_without_generation`; golden set (Unanswerable items still to write) |
+| E9 † | Question about a deleted document | §5.5 guarantees | never cites the deleted document | `test_deleted_doc_not_retrievable`, `test_delete_removes_vectors_files_and_row` |
+| E10 † | Contradicting documents (a superseded fee notification vs its amendment; a federal rule vs a provincial one) | freshness rule + prompt rule; both cited with agency and date | newest presented as current, older as superseded | prompt rule only (`test_system_prompt_contains_every_rule`); golden set (superseded vs current pairs still to write) |
+| E11 † | Tables (fee schedules: normal vs urgent, by category) | atomic Markdown table chunks, header repeated on split | correct cell-level answers | `test_tables_are_atomic_and_split_by_rows_with_header`, `test_pdf_table_becomes_markdown_block`; golden set (table questions still to write) |
+| E12 † | Special characters (Rs., PKR, %, emoji, Urdu digits ۲۰۲۵, CNIC-style `#####-#######-#` patterns in questions) | NFKC + digit normalization | handled | `test_special_chars_urdu_digits`, `test_urdu_and_ascii_digits_share_an_index` |
+| E13 † | Non-English text in files (Urdu Nastaliq) | detection, Urdu normalization, multilingual embedding | cross-lingual answers | `test_quote_in_the_source_language_is_verified_for_an_urdu_chunk`; golden set (Urdu subset still to write) |
+| E14 † | LLM timeout / rate limit / seller offline | per-attempt timeout → next model in the chain → optional Ollama fallback (`LOCAL_FALLBACK_ENABLED`, `degraded=true`) → 503 | 200 (degraded) / 503 | `test_three_500s_fail_over_to_next_model`, `test_per_attempt_timeout_cuts_a_hanging_model`, `test_everything_down_raises_503_llm_unavailable` |
+| E15 † | NVIDIA API unreachable / key missing or invalid / Qdrant down | readiness flips; clear errors | 503 | `test_llm_unavailable_is_503`, `test_ready_503_when_required_down`, `test_connection_errors_map_to_503` |
+| E16 † | Concurrent uploads of the same file | DB unique constraint | exactly one 201 | `test_concurrent_duplicate_uploads`, `test_same_file_saved_by_a_concurrent_upload_is_a_file_duplicate` |
+| E17 † | Many concurrent questions | async I/O, GPU worker queue, semaphores, rate limiter | all complete or 429; no GPU OOM | `test_concurrent_asks`, `test_ask_is_limited_per_user` |
 | E18 | Unsupported type / renamed `.exe` | magic-byte mismatch | 415 | `test_spoofed_extension` |
 | E19 | Encrypted PDF | `needs_pass` | 400 | `test_encrypted_pdf` |
 | E20 | Corrupt PDF/DOCX | parser error mapping | 400 | `test_corrupt_files` |
-| E21 | Zip bomb / macro document | GD-6/7 | 400 | `test_zip_bomb`, `test_macro_doc` |
-| E22 | Hidden injection inside a document | GD-9/10 | ignored and flagged | `test_doc_injection_not_followed` |
-| E23 | Code-switched question (English + Roman Urdu) | dominant-language label, multi-variant retrieval | answer in the dominant language | multilingual subset |
-| E24 | Roman Urdu with non-standard spelling ("kia/kya", "shanakhti/shnakhti card", "pasport") | LLM transliteration + translation variants | correct retrieval | multilingual subset |
-| E25 | Multi-part question, one part unanswerable | decomposition + `unanswered_parts` | answers A, flags B | golden set |
+| E21 | Zip bomb / macro document | GD-6/7 | 400 | `test_zip_bomb`, `test_macro_documents` |
+| E22 | Hidden injection inside a document | GD-9/10 | ignored and flagged | `test_doc_injection_not_followed`, `test_hidden_injection_removed_and_counted` |
+| E23 | Code-switched question (English + Roman Urdu) | dominant-language label, multi-variant retrieval | answer in the dominant language | `test_detect_language`, `test_roman_urdu_question_requests_roman_urdu_answer`; golden set (code-switched items still to write) |
+| E24 | Roman Urdu with non-standard spelling ("kia/kya", "shanakhti/shnakhti card", "pasport") | LLM transliteration + translation variants | correct retrieval | `test_variant_fusion_finds_hits_from_every_variant`; golden set (spelling-variant items still to write) |
+| E25 | Multi-part question, one part unanswerable | decomposition + `unanswered_parts` | answers A, flags B | `test_partial_answer_lists_unanswered_parts` |
 | E26 | Same file name, new content (revised fee schedule) | UI prompt → PUT diff upsert | 200, `version+1`, only changed chunks embedded | `test_put_incremental_upsert` |
 | E27 | PUT with identical content | hash compare | 409 `no_change` | `test_put_no_change` |
-| E28 | Delete while ingestion is running | per-document lock; job cancelled | 204, no orphan vectors | `test_delete_during_ingest` |
-| E29 | Crash mid-ingest | reconciler compensating cleanup | `FAILED`, no orphans | `test_reconciler_orphans` |
-| E30 | Accessing another user's private document | tenant filter + ownership check (§5.8.2) | 404 | `test_cross_tenant_isolation` |
-| E31 | **Ambiguous jurisdiction** ("driving licence kaise banwayein?" with Punjab and Sindh procedures indexed) | no province detected + chunks from several provinces → answer per province, federal rule first | each province cited separately | golden set (2) |
+| E28 | Delete while ingestion is running | per-document lock; job cancelled | 204, no orphan vectors | `test_delete_during_ingest_waits_for_the_document_lock` (waits for the lock; cancelling a background job comes with ISSUE-011) |
+| E29 | Crash mid-ingest | reconciler compensating cleanup | `FAILED`, no orphans | `test_crash_mid_ingest_leaves_no_orphans_and_allows_retry` (in-process failures); startup reconciler **not implemented** (ISSUE-012) |
+| E30 | Accessing another user's private document | tenant filter + ownership check (§5.8.2) | 404 | `test_cross_tenant_access_is_404_and_public_writes_403`, `test_tenant_rules` |
+| E31 | **Ambiguous jurisdiction** ("driving licence kaise banwayein?" with Punjab and Sindh procedures indexed) | no province detected + chunks from several provinces → answer per province, federal rule first | each province cited separately | `test_detected_province_becomes_a_jurisdiction_filter`, `test_province_filter_falls_back_when_nothing_matches`; golden set (Punjab vs Sindh items still to write) |
 
 **Multi-tenancy (§5.8)**
 
 | # | Edge case | Handling | Status / outcome | Test |
 |---|---|---|---|---|
-| E32 | New user asks before uploading anything | readable set includes `u_public` → public corpus answers; with `scope=mine` → corpus check | 200 cited answer / 200 `no_documents` | `test_new_user_sees_public_corpus` |
+| E32 | New user asks before uploading anything | readable set includes `u_public` → public corpus answers; with `scope=mine` → corpus check | 200 cited answer / 200 `no_documents` | `test_ask_returns_cited_answer`, `test_readable_owner_ids_per_scope` |
 | E33 | Non-admin uploads to, edits or deletes the public corpus | role read from DB; write rule in §5.8.3 | **403** `admin_required` | `test_public_write_requires_admin` |
 | E34 | User uploads a file already in the public corpus | `file_sha256` / `text_sha256` checked against `u_public` too | 409 `duplicate_public_document` + existing id | `test_duplicate_of_public` |
-| E35 | Private upload contradicts an official document (a helpdesk's newer local notice) | `scope` attribute on `<source>`; contradiction rule cites both, labelled | both shown: "Official source" vs "Your upload" + date | golden set (1) + `test_scope_labels` |
+| E35 | Private upload contradicts an official document (a helpdesk's newer local notice) | `scope` attribute on `<source>`; contradiction rule cites both, labelled | both shown: "Official source" vs "Your upload" + date | `test_scope_labels` |
 | E36 | Two users upload the same file, then one deletes it | separate `doc_id`s → separate point ids; delete filtered by `(user_id, doc_id)` | both 201; the other user's copy still answers | `test_same_file_two_tenants` |
-| E37 | Cache leakage across tenants (same question from A and B; `chunks_embedded` revealing another tenant's upload) | embedding cache namespaced per owner; no answer cache on the serving path (§5.8.5) | B's answer built only from B's readable docs | `test_cache_isolation` |
-| E38 | Reading another user's ingestion progress, chunks or feedback (`request_id`) | ownership check + SQL loader criteria | **404** | `test_cross_tenant_resources_404` (generated matrix) |
-| E39 | Tenant quota exceeded (docs / bytes / chunks) or too many concurrent ingest jobs | per-user counters checked before writing | **413** `quota_exceeded` / **429** `too_many_ingest_jobs` | `test_quota_exceeded`, `test_ingest_job_limit` |
-| E40 | Noisy neighbour: A ingests a 300-page document while B asks a question | per-tenant round-robin GPU queue; query work goes first | B waits ≤ one in-flight batch | `test_gpu_queue_fairness` (fake slow embedder) |
-| E41 | Account deletion | §5.8.7 cascade + count == 0 check; reconciler completes partial failures | **204**; no vectors, files or cache left; old token → 401 | `test_account_deletion_cascade` |
-| E42 | Stale privileges: password changed, or admin demoted while holding a valid token | `token_version` in JWT; role read from DB per request | old token **401**; demoted admin's write **403** | `test_token_version_revocation`, `test_demoted_admin` |
-| E43 | A code path queries Qdrant without a tenant filter | `TenantScopedVectorStore` raises `MissingTenantFilter`; CI grep on `qdrant_client` imports | **500** + security log; no data returned | `test_missing_tenant_filter_raises` |
+| E37 | Cache leakage across tenants (same question from A and B; `chunks_embedded` revealing another tenant's upload) | embedding cache namespaced per owner; no answer cache on the serving path (§5.8.5) | B's answer built only from B's readable docs | `test_chunk_cache_is_per_owner_namespace` |
+| E38 | Reading another user's ingestion progress, chunks or feedback (`request_id`) | ownership check + SQL loader criteria | **404** | `test_tenant_rules`, `test_feedback_on_own_and_foreign_requests` |
+| E39 | Tenant quota exceeded (docs / bytes / chunks) or too many concurrent ingest jobs | per-user counters checked before writing | **413** `quota_exceeded` / **429** `too_many_ingest_jobs` | `test_quota_exceeded`, `test_quota_exceeded_bytes_and_chunks`, `test_ingest_job_limit` |
+| E40 | Noisy neighbour: A ingests a 300-page document while B asks a question | per-tenant round-robin GPU queue; query work goes first | B waits ≤ one in-flight batch | **dropped**: models are hosted (no local GPU queue); per-user ingest slots are `test_ingest_job_limit` |
+| E41 | Account deletion | §5.8.7 cascade + count == 0 check; reconciler completes partial failures | **204**; no vectors, files or cache left; old token → 401 | `test_delete_me_cascades_through_the_document_service`, `test_delete_me_failure_is_503_and_tokens_still_die`; partial-failure retry comes with ISSUE-012 |
+| E42 | Stale privileges: password changed, or admin demoted while holding a valid token | `token_version` in JWT; role read from DB per request | old token **401**; demoted admin's write **403** | `test_token_version_bump_kills_old_tokens`, `test_demoted_admin` (old token **401**: demotion revokes it), `test_role_is_read_from_the_db_not_the_token` |
+| E43 | A code path queries Qdrant without a tenant filter | `TenantScopedVectorStore` raises `MissingTenantFilter`; CI grep on `qdrant_client` imports | **500** + security log; no data returned | `test_missing_tenant_filter_raises`, `test_qdrant_client_imported_only_in_vector_store` |
 
 **Citizen-services domain (§3.1, §7.2)**
 
 | # | Edge case | Handling | Status / outcome | Test |
 |---|---|---|---|---|
-| E44 | **Personal advice request** ("mera case court mein hai, kya karun?"; "should I file a return if…") | GO-9: general rule with citations + "not legal advice" notice + referral from `referrals.yaml`; directive personal advice regenerated away | 200 with `notices: ["not_advice", "referral"]` | golden set (2) + `test_advice_boundary` |
-| E45 | **Stale or undated fee/deadline information** (the only fee schedule found is more than 12 months old, or has no date) | GO-10: answer states the notification date and links the official site for the current figure | 200 with `notices: ["dated_information"]` | `test_stale_fee_notice` |
-| E46 | **Text layer that exists but is junk** (NA Urdu Constitution: Latin garbage OCR layer; Punjab Urdu Act and BISP Urdu pages: scrambled Urdu order) | per-page text-quality check: expected-script ratio, Urdu/English dictionary hit rate, character-order sanity on Urdu ligatures; failing pages are re-done with OCR and flagged `is_ocr` | 201, junk text never indexed | `test_garbage_text_layer` |
+| E44 | **Personal advice request** ("mera case court mein hai, kya karun?"; "should I file a return if…") | GO-9: general rule with citations + "not legal advice" notice + referral from `referrals.yaml`; directive personal advice regenerated away | 200 with `notices: ["not_advice", "referral"]` | `test_advice_request_with_verified_referral`, `test_directive_advice_patterns` |
+| E45 | **Stale or undated fee/deadline information** (the only fee schedule found is more than 12 months old, or has no date) | GO-10: answer states the notification date and links the official site for the current figure | 200 with `notices: ["dated_information"]` | `test_dated_information_notice`, `test_dated_notices` |
+| E46 | **Text layer that exists but is junk** (NA Urdu Constitution: Latin garbage OCR layer; Punjab Urdu Act and BISP Urdu pages: scrambled Urdu order) | per-page text-quality check: expected-script ratio, Urdu/English dictionary hit rate, character-order sanity on Urdu ligatures; failing pages are re-done with OCR and flagged `is_ocr` | 201, junk text never indexed | `test_garbage_text_layer_is_never_indexed`, `test_scrambled_urdu_fails` |
 
 ---
 
