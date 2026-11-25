@@ -813,8 +813,8 @@ Each row names the test that covers it (audited 25 Nov 2026, ISSUE-004); rows ma
 | E2 † | Empty PDF / 0-byte file | size + text checks | 400 | `test_empty_file` |
 | E3 † | Same file uploaded twice | SHA-256 unique constraint | 409 + existing id | `test_duplicate_upload` |
 | E4 | Same content, different bytes (re-fetched web page) | `text_sha256` | 409 `duplicate_content` | `test_content_duplicate` |
-| E5 † | Very large file | streaming size check; > sync limit → 202; > cap → 413 | 202 / 413 | `test_too_large_is_413`; 202 path **not implemented** (ISSUE-011) |
-| E6 † | Very long document (the Constitution, 200+ pages) | page cap, batched GPU embedding, progress reporting | 202 + progress | `test_page_cap`; background progress **not implemented** (ISSUE-011) |
+| E5 † | Very large file | streaming size check; > sync limit → 202; > cap → 413 | 202 / 413 | `test_too_large_is_413`, `test_large_upload_returns_202_with_location`, `test_large_upload_is_accepted_and_ingested_in_background`, `test_page_count_triggers_background_even_for_a_small_file` |
+| E6 † | Very long document (the Constitution, 200+ pages) | page cap, batched GPU embedding, progress reporting | 202 + progress | `test_page_cap`, `test_background_progress_reaches_total`, `test_background_workers_cap_concurrency` |
 | E7 † | Question before any upload (no readable documents: empty public corpus, or `scope=mine` before the user uploads; see E32) | corpus-check node over readable documents | 200 `no_documents` | `test_no_documents_for_scope_mine_without_uploads`, `test_other_users_ready_documents_do_not_count` |
 | E8 † | Unanswerable question | relevance gate + `answerable=false` | 200 `insufficient_context` | `test_unanswerable_is_refused_by_the_relevance_gate_without_generation`; golden set (Unanswerable items still to write) |
 | E9 † | Question about a deleted document | §5.5 guarantees | never cites the deleted document | `test_deleted_doc_not_retrievable`, `test_delete_removes_vectors_files_and_row` |
@@ -836,7 +836,7 @@ Each row names the test that covers it (audited 25 Nov 2026, ISSUE-004); rows ma
 | E25 | Multi-part question, one part unanswerable | decomposition + `unanswered_parts` | answers A, flags B | `test_partial_answer_lists_unanswered_parts` |
 | E26 | Same file name, new content (revised fee schedule) | UI prompt → PUT diff upsert | 200, `version+1`, only changed chunks embedded | `test_put_incremental_upsert` |
 | E27 | PUT with identical content | hash compare | 409 `no_change` | `test_put_no_change` |
-| E28 | Delete while ingestion is running | per-document lock; job cancelled | 204, no orphan vectors | `test_delete_during_ingest_waits_for_the_document_lock` (waits for the lock; cancelling a background job comes with ISSUE-011) |
+| E28 | Delete while ingestion is running | per-document lock; job cancelled | 204, no orphan vectors | `test_delete_during_ingest_waits_for_the_document_lock` (inline ingest: waits for the lock), `test_delete_cancels_background_job` (background job: cancelled, nothing recreated) |
 | E29 | Crash mid-ingest | reconciler compensating cleanup | `FAILED`, no orphans | `test_crash_mid_ingest_leaves_no_orphans_and_allows_retry` (in-process failures); startup reconciler **not implemented** (ISSUE-012) |
 | E30 | Accessing another user's private document | tenant filter + ownership check (§5.8.2) | 404 | `test_cross_tenant_access_is_404_and_public_writes_403`, `test_tenant_rules` |
 | E31 | **Ambiguous jurisdiction** ("driving licence kaise banwayein?" with Punjab and Sindh procedures indexed) | no province detected + chunks from several provinces → answer per province, federal rule first | each province cited separately | `test_detected_province_becomes_a_jurisdiction_filter`, `test_province_filter_falls_back_when_nothing_matches`; golden set (Punjab vs Sindh items still to write) |

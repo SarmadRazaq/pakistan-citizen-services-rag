@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ from app.ingestion.chunking import RegexTokenCounter
 from app.ingestion.ocr import NoOcr
 from app.ingestion.service import IngestionService
 from app.main import create_app
-from app.protocols import UploadedFile
+from app.protocols import Embedding, UploadedFile
 from app.schemas import DocumentMetadata, DocumentOut
 from tests.conftest import ok_probe
 from tests.fakes import FakeEmbedder, InMemoryVectorStore
@@ -265,3 +267,107 @@ def test_routes_keep_documented_errors(app: FastAPI) -> None:
     paths = spec()["paths"]
     assert set(paths[DOCS]["post"]["responses"]) >= {"201", "202", "400", "409", "413", "415"}
     assert set(paths[DOCS + "/{document_id}"]["delete"]["responses"]) >= {"204", "403", "404", "503"}
+
+
+# ---------------------------------------------------------------- background ingestion (ISSUE-011)
+
+
+class GatedEmbedder(FakeEmbedder):
+    """Holds every embed call until `gate` is set, so a background job stays in flight."""
+
+    def __init__(self) -> None:
+        self.gate = asyncio.Event()
+        self.called = asyncio.Event()
+
+    async def embed_documents(self, texts: Sequence[str]) -> list[Embedding]:
+        self.called.set()
+        await self.gate.wait()
+        return await super().embed_documents(texts)
+
+
+@dataclass
+class Background:
+    service: IngestionService
+    embedder: GatedEmbedder
+
+
+@pytest.fixture
+async def bg(api_settings: Settings, tenant: Tenant) -> AsyncIterator[tuple[FastAPI, Background]]:
+    """An app whose every upload is a large one (`sync_ingest_max_mb=0`) with a gated embedder."""
+    settings = api_settings.model_copy(update={"sync_ingest_max_mb": 0})
+    db = Database("sqlite+aiosqlite:///:memory:")
+    await db.create_all()
+    embedder = GatedEmbedder()
+    service = IngestionService(
+        settings, db, InMemoryVectorStore(), embedder, token_counter=RegexTokenCounter(), ocr=NoOcr()
+    )
+    application = create_app(settings, health_service=HealthService([ok_probe("qdrant")], timeout_s=1.0))
+    application.state.db = db
+    application.state.documents = service
+    application.dependency_overrides[get_tenant] = tenant
+    try:
+        yield application, Background(service, embedder)
+    finally:
+        embedder.gate.set()
+        await service.drain()
+        await db.dispose()
+
+
+@pytest.fixture
+async def bg_client(bg: tuple[FastAPI, Background]) -> AsyncIterator[httpx.AsyncClient]:
+    transport = httpx.ASGITransport(app=bg[0], raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+def three_page_pdf(path: Path) -> bytes:
+    pages = [
+        [
+            f"Page {n} part {p}. "
+            + " ".join(f"Rule {n}{p}{k} needs form {n}{p}{k} at the office." for k in range(4))
+        ]
+        for n in range(1, 4)
+        for p in (1,)
+    ]
+    return f.make_pdf(path, pages).read_bytes()
+
+
+async def test_large_upload_returns_202_with_location(
+    bg: tuple[FastAPI, Background], bg_client: httpx.AsyncClient, tmp_path: Path
+) -> None:
+    _, held = bg
+    pdf = three_page_pdf(tmp_path / "big.pdf")
+    r = await bg_client.post(DOCS, files=files("big.pdf", pdf, "application/pdf"))
+    assert r.status_code == 202, r.text
+    doc = r.json()
+    assert doc["status"] in ("PENDING", "PROCESSING")
+    assert r.headers["location"] == f"{DOCS}/{doc['id']}"
+
+    held.embedder.gate.set()
+    await held.service.drain()
+
+    got = await bg_client.get(r.headers["location"])
+    assert got.status_code == 200
+    body = got.json()
+    assert body["status"] == "READY" and body["chunk_count"] > 0
+    assert body["progress"]["pages_total"] == 3
+    assert body["progress"]["pages_done"] == body["progress"]["pages_total"]
+
+
+async def test_patch_during_job_is_409(
+    bg: tuple[FastAPI, Background], bg_client: httpx.AsyncClient, tmp_path: Path
+) -> None:
+    _, held = bg
+    pdf = three_page_pdf(tmp_path / "big.pdf")
+    r = await bg_client.post(DOCS, files=files("big.pdf", pdf, "application/pdf"))
+    assert r.status_code == 202, r.text
+    await asyncio.wait_for(held.embedder.called.wait(), 10)
+
+    patched = await asyncio.wait_for(bg_client.patch(r.headers["location"], json={"agency": "DGIP"}), 10)
+    assert patched.status_code == 409
+    assert patched.json()["code"] == "ingest_in_progress"
+    assert patched.headers["content-type"].startswith("application/problem+json")
+
+    held.embedder.gate.set()
+    await held.service.drain()
+    assert (await bg_client.get(r.headers["location"])).json()["status"] == "READY"

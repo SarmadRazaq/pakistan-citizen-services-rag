@@ -10,6 +10,7 @@ Writes are checked by the services through `ctx.ensure_writable(...)`.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import ORMExecuteState, Session, with_loader_criteria
+from sqlalchemy.pool import StaticPool
 
 from app.core.tenancy import TenantContext
 from app.db.models import Base, OwnedMixin
@@ -54,6 +56,12 @@ class Database:
             kwargs["connect_args"] = {"check_same_thread": False}
         self.engine: AsyncEngine = create_async_engine(url, **kwargs)
         self._factory = async_sessionmaker(self.engine, expire_on_commit=False)
+        # In-memory SQLite shares ONE connection between all sessions, so one session's rollback or
+        # close would undo another's uncommitted write. Serialise sessions there (background jobs
+        # and requests overlap). File databases and Postgres give each session its own connection.
+        self._shared_connection: asyncio.Lock | None = (
+            asyncio.Lock() if isinstance(self.engine.pool, StaticPool) else None
+        )
 
     async def create_all(self) -> None:
         async with self.engine.begin() as conn:
@@ -65,6 +73,15 @@ class Database:
     @asynccontextmanager
     async def session(self, ctx: TenantContext) -> AsyncIterator[AsyncSession]:
         """A session bound to one tenant. Commits on success, rolls back on error."""
+        if self._shared_connection is None:
+            async with self._open(ctx) as s:
+                yield s
+        else:
+            async with self._shared_connection, self._open(ctx) as s:
+                yield s
+
+    @asynccontextmanager
+    async def _open(self, ctx: TenantContext) -> AsyncIterator[AsyncSession]:
         async with self._factory() as s:
             s.sync_session.info[TENANT_KEY] = ctx
             try:

@@ -27,6 +27,10 @@ COOKIE_SECURE=1
 FORWARDED_ALLOW_IPS=127.0.0.1             # address(es) of your reverse proxy
 ```
 
+Leave `EVAL_OVERRIDES_ENABLED` unset (false) in production: it makes `/ask` and `/search` honour the
+`X-Eval-Config` header (dense-only, no rerank, another generation model) for admin callers, and exists only
+for the evaluation harness.
+
 Use `QDRANT_API_KEY` (and `QDRANT_URL`) only for Qdrant Cloud; compose sets `QDRANT_URL` for the bundled Qdrant.
 
 ## 2. Check the models
@@ -100,6 +104,11 @@ The Qdrant index can be rebuilt by re-ingesting, but the SQLite database and upl
 
 Run exactly one API process per container (the Dockerfile pins `--workers 1`). Document locks, ingestion jobs and
 rate limits are in process memory. Do not raise workers or replicas of `api` without moving that state out first.
+
+Large uploads (above `SYNC_INGEST_MAX_MB` or `SYNC_INGEST_MAX_PAGES`) are ingested by background jobs inside the API
+process (`BACKGROUND_INGEST_WORKERS` at a time, `BACKGROUND_INGEST_QUEUE_MAX` in flight). A graceful stop marks running
+jobs FAILED ("interrupted"). A crash or kill mid-job leaves the document PROCESSING (or UPDATING) until the ISSUE-012
+reconciler exists; delete and re-upload it.
 
 ## Rotating secrets
 

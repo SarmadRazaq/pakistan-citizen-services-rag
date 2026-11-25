@@ -2,8 +2,14 @@
 
 Upload: validate → hash → dedupe (file, public corpus, content) → extract → clean → chunk →
 PENDING row → PROCESSING → embed in batches → upsert deterministic points → verify the point count
-→ READY (or FAILED, with partial points deleted). Ingestion is synchronous for the MVP (`accepted`
-is always False, so the router answers 201).
+→ READY (or FAILED, with partial points deleted). Small files are ingested inline (`accepted` is
+False, the router answers 201). A file above `sync_ingest_max_mb`, or a PDF above `sync_ingest_max_pages`,
+is accepted after the cheap checks (quota, job slot, validation, file duplicate) and ingested by a
+background job (`accepted` is True, 202): the row is PENDING, then PROCESSING with page progress, then
+READY or FAILED. Jobs run in this process: `background_ingest_workers` at a time, at most
+`background_ingest_queue_max` in flight, one job per document. `patch` and `replace` answer 409
+`ingest_in_progress` while a document has a job; `delete` cancels it. `drain()` waits for the jobs and
+`aclose()` cancels them (they end FAILED, "interrupted").
 
 Replace (`PUT`): the §5.4 diff upsert. Point ids are `uuid5(doc_id:chunk_hash:occurrence)`, so
 unchanged chunks keep their ids: only `add` is embedded, `keep` gets `set_payload`, `remove` is
@@ -23,8 +29,7 @@ import json
 import re
 import shutil
 from collections import Counter
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path, PurePath
@@ -62,7 +67,7 @@ from app.ingestion.metadata import (
     normalize_topic,
 )
 from app.ingestion.ocr import NoOcr, PageOcr, TesseractOcr
-from app.ingestion.validation import validate_file
+from app.ingestion.validation import pdf_page_count, validate_file
 from app.protocols import (
     ChunkPayload,
     ChunkPoint,
@@ -170,6 +175,15 @@ def _checked_public_topic(topic: str) -> str:
     return slug
 
 
+ProgressFn = Callable[[float], Awaitable[None]]
+
+
+def _detail(exc: BaseException | str) -> str:
+    if isinstance(exc, str):
+        return exc
+    return str(exc.detail if isinstance(exc, AppError) else type(exc).__name__)[:500]
+
+
 def _safe_file_name(name: str) -> str:
     base = PurePath(name.replace("\\", "/")).name.strip() or "upload"
     return base[:255]
@@ -205,16 +219,16 @@ class IngestionService:
         self.injection_classifier = injection_classifier
         self._locks: dict[str, asyncio.Lock] = {}
         self._jobs: Counter[str] = Counter()
+        self._tasks: dict[str, asyncio.Task[None]] = {}  # doc_id -> running background job (strong refs)
+        self._workers = asyncio.Semaphore(settings.background_ingest_workers)
 
     # ------------------------------------------------------------ concurrency helpers
 
     def _lock(self, doc_id: str) -> asyncio.Lock:
         return self._locks.setdefault(doc_id, asyncio.Lock())
 
-    @asynccontextmanager
-    async def _job_slot(self, ctx: TenantContext, owner: str) -> AsyncIterator[None]:
-        limited = owner != ctx.public_owner_id
-        if limited and self._jobs[owner] >= self.settings.max_ingest_jobs_per_user:
+    def _acquire_slot(self, ctx: TenantContext, owner: str) -> None:
+        if owner != ctx.public_owner_id and self._jobs[owner] >= self.settings.max_ingest_jobs_per_user:
             raise AppError(
                 ErrorCode.TOO_MANY_INGEST_JOBS,
                 "Too many uploads are being processed for this account. Try again shortly.",
@@ -222,10 +236,68 @@ class IngestionService:
                 headers={"Retry-After": "5"},
             )
         self._jobs[owner] += 1
-        try:
-            yield
-        finally:
-            self._jobs[owner] -= 1
+
+    def _release_slot(self, owner: str) -> None:
+        self._jobs[owner] -= 1
+
+    def _ensure_idle(self, doc_id: str) -> None:
+        if doc_id in self._tasks:
+            raise AppError(
+                ErrorCode.INGEST_IN_PROGRESS,
+                "The document is still being ingested. Try again when it is finished.",
+            )
+
+    async def _guard_idle(self, ctx: TenantContext, doc_id: str) -> None:
+        """404/403 first (a foreign id stays 404), then 409 while a background job owns the document."""
+        async with self.db.session(ctx) as s:
+            row = await self._load(s, ctx, doc_id)
+            ctx.ensure_writable(row.user_id)
+        self._ensure_idle(doc_id)
+
+    def _spawn(self, doc_id: str, owner: str, job: Awaitable[None]) -> None:
+        """Run `job` in the background. Its job slot is released when the task ends, however it ends."""
+        task = asyncio.ensure_future(job)
+        self._tasks[doc_id] = task
+
+        def done(finished: asyncio.Task[None]) -> None:
+            if self._tasks.get(doc_id) is finished:
+                del self._tasks[doc_id]
+            self._release_slot(owner)
+            if not finished.cancelled() and (error := finished.exception()) is not None:
+                log.error("ingest.job_crashed", doc_id=doc_id, error=type(error).__name__)
+
+        task.add_done_callback(done)
+
+    def _check_queue(self) -> None:
+        if len(self._tasks) >= self.settings.background_ingest_queue_max:
+            raise AppError(
+                ErrorCode.TOO_MANY_INGEST_JOBS,
+                "The server is busy ingesting other documents. Try again shortly.",
+                extra={"limit": self.settings.background_ingest_queue_max},
+                headers={"Retry-After": "10"},
+            )
+
+    async def drain(self) -> None:
+        """Wait until no background job is running."""
+        while self._tasks:
+            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+            await asyncio.sleep(0)
+
+    async def aclose(self) -> None:
+        """Cancel every background job (each marks its document FAILED) and wait for them."""
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _is_large(self, file: UploadedFile, file_type: str) -> tuple[bool, int]:
+        """(ingest in the background?, PDF page count or 0)."""
+        pages = await asyncio.to_thread(pdf_page_count, file.path) if file_type == "pdf" else 0
+        large = (
+            file.size_bytes > self.settings.sync_ingest_max_bytes
+            or pages > self.settings.sync_ingest_max_pages
+        )
+        return large, pages
 
     # ------------------------------------------------------------ DB helpers
 
@@ -242,6 +314,15 @@ class IngestionService:
             for key, value in values.items():
                 setattr(row, key, value)
         return row
+
+    async def _update_alive(self, ctx: TenantContext, doc_id: str, **values: Any) -> None:
+        """Like `_update`, but a row that is gone or being deleted is left alone."""
+        async with self.db.session(ctx) as s:
+            row = (await s.scalars(select(Document).where(Document.id == doc_id))).first()
+            if row is None or row.status == DocumentStatus.DELETING.value:
+                return
+            for key, value in values.items():
+                setattr(row, key, value)
 
     async def _check_quota(self, ctx: TenantContext, owner: str, size_bytes: int) -> None:
         if owner == ctx.public_owner_id:
@@ -535,7 +616,12 @@ class IngestionService:
         return planned
 
     async def _embed_and_upsert(
-        self, ctx: TenantContext, owner: str, points: Sequence[_PlannedPoint], report: _IndexReport
+        self,
+        ctx: TenantContext,
+        owner: str,
+        points: Sequence[_PlannedPoint],
+        report: _IndexReport,
+        progress: ProgressFn | None = None,
     ) -> None:
         batch = max(1, self.settings.embed_batch_size)
         for start in range(0, len(points), batch):
@@ -550,6 +636,8 @@ class IngestionService:
             )
             report.written.extend(p.point_id for p in group)
             report.embedded += len(group)
+            if progress is not None:
+                await progress(report.embedded / len(points))
 
     async def _verify(self, ctx: TenantContext, doc_id: str, expected: int) -> None:
         actual = await self.store.count(ctx, doc_id)
@@ -593,6 +681,85 @@ class IngestionService:
 
     # ------------------------------------------------------------ DocumentService
 
+    def _upload_row(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        doc_id: str,
+        file_name: str,
+        file_type: str,
+        file_sha: str,
+        size_bytes: int,
+        meta: _Meta,
+        *,
+        text_sha: str | None,
+        language: str | None,
+        pages: int,
+        is_ocr: bool,
+    ) -> Document:
+        return Document(
+            id=doc_id,
+            user_id=owner,
+            visibility=Visibility.PUBLIC.value if owner == ctx.public_owner_id else Visibility.PRIVATE.value,
+            file_name=file_name,
+            file_type=file_type,
+            size_bytes=size_bytes,
+            file_sha256=file_sha,
+            text_sha256=text_sha,
+            status=DocumentStatus.PENDING.value,
+            version=1,
+            title=meta.title,
+            agency=meta.agency,
+            jurisdiction=meta.jurisdiction,
+            topic=meta.topic,
+            effective_date=meta.effective_date,
+            doc_type=meta.doc_type,
+            source_url=meta.source_url,
+            language=language,
+            pages=pages,
+            is_ocr=is_ocr,
+            pages_total=pages,
+        )
+
+    async def _add_row(self, ctx: TenantContext, owner: str, row: Document) -> None:
+        try:
+            async with self.db.session(ctx) as s:
+                s.add(row)
+        except IntegrityError:  # a concurrent identical upload won the unique constraint (E16)
+            await self._check_file_duplicate(ctx, owner, row.file_sha256)
+            raise AppError(ErrorCode.DUPLICATE_DOCUMENT, "This file was already uploaded.") from None
+
+    async def _index_new(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        doc_id: str,
+        file_name: str,
+        prepared: _Prepared,
+        meta: _Meta,
+        source: Path,
+        report: _IndexReport,
+        progress: ProgressFn | None = None,
+    ) -> Document:
+        """Plan, embed, verify, store the files, mark READY: the index step shared by both upload paths."""
+        planned = await self._plan_points(doc_id, 1, file_name, prepared.file_type, prepared, meta)
+        await self._embed_and_upsert(ctx, owner, planned, report, progress)
+        await self._verify(ctx, doc_id, len(planned))
+        report.added = len(planned)
+        storage_path = await asyncio.to_thread(
+            self._store_files, owner, doc_id, source, prepared.file_type, self._chunk_manifest(planned)
+        )
+        return await self._update(
+            ctx,
+            doc_id,
+            status=DocumentStatus.READY.value,
+            chunk_count=len(planned),
+            storage_path=storage_path,
+            pages_done=prepared.extracted.page_count,
+            last_ingest=self._report_dict(prepared, report),
+            error=None,
+        )
+
     async def upload(
         self,
         ctx: TenantContext,
@@ -607,83 +774,78 @@ class IngestionService:
         if owner == ctx.public_owner_id and metadata.topic:
             metadata = metadata.model_copy(update={"topic": _checked_public_topic(metadata.topic)})
         file_name = _safe_file_name(file.file_name)
-        await self._check_quota(ctx, owner, file.size_bytes)
-        async with self._job_slot(ctx, owner):
+        self._acquire_slot(ctx, owner)
+        handed_off = False  # a background job releases the slot itself when it ends
+        try:
             file_type, file_sha = await self._validate(file)
             await self._check_file_duplicate(ctx, owner, file_sha)
-            prepared = await self._extract(file, file_type, file_sha)
-            await self._check_content_duplicate(ctx, owner, prepared.text_sha256, file_sha=file_sha)
-            await self._check_chunk_quota(ctx, owner, len(prepared.chunks), None)
-            meta = self._infer_meta(metadata, prepared, file_name, source_url, doc_type)
+            await self._check_quota(
+                ctx, owner, file.size_bytes
+            )  # after the duplicate check: a re-upload is a 409
+            large, pages = await self._is_large(file, file_type)
+            if large:
+                out = await self._start_upload_job(
+                    ctx, owner, file, file_name, file_type, file_sha, pages, metadata, source_url, doc_type
+                )
+                handed_off = True
+                return out, True
+            inline = await self._upload_inline(
+                ctx, owner, file, file_name, file_type, file_sha, metadata, source_url, doc_type
+            )
+            return inline, False
+        finally:
+            if not handed_off:
+                self._release_slot(owner)
 
-            doc_id = new_document_id()
-            row = Document(
-                id=doc_id,
-                user_id=owner,
-                visibility=Visibility.PUBLIC.value
-                if owner == ctx.public_owner_id
-                else Visibility.PRIVATE.value,
-                file_name=file_name,
-                file_type=prepared.file_type,
-                size_bytes=file.size_bytes,
-                file_sha256=prepared.file_sha256,
-                text_sha256=prepared.text_sha256,
-                status=DocumentStatus.PENDING.value,
-                version=1,
-                title=meta.title,
-                agency=meta.agency,
-                jurisdiction=meta.jurisdiction,
-                topic=meta.topic,
-                effective_date=meta.effective_date,
-                doc_type=meta.doc_type,
-                source_url=meta.source_url,
+    async def _upload_inline(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        file: UploadedFile,
+        file_name: str,
+        file_type: str,
+        file_sha: str,
+        metadata: DocumentMetadata,
+        source_url: str | None,
+        doc_type: str | None,
+    ) -> DocumentOut:
+        prepared = await self._extract(file, file_type, file_sha)
+        await self._check_content_duplicate(ctx, owner, prepared.text_sha256, file_sha=file_sha)
+        await self._check_chunk_quota(ctx, owner, len(prepared.chunks), None)
+        meta = self._infer_meta(metadata, prepared, file_name, source_url, doc_type)
+
+        doc_id = new_document_id()
+        await self._add_row(
+            ctx,
+            owner,
+            self._upload_row(
+                ctx,
+                owner,
+                doc_id,
+                file_name,
+                prepared.file_type,
+                prepared.file_sha256,
+                file.size_bytes,
+                meta,
+                text_sha=prepared.text_sha256,
                 language=prepared.language,
                 pages=prepared.extracted.page_count,
                 is_ocr=prepared.is_ocr,
-                pages_total=prepared.extracted.page_count,
-            )
-            try:
-                async with self.db.session(ctx) as s:
-                    s.add(row)
-            except IntegrityError:  # a concurrent identical upload won the unique constraint (E16)
-                await self._check_file_duplicate(ctx, owner, prepared.file_sha256)
-                raise AppError(ErrorCode.DUPLICATE_DOCUMENT, "This file was already uploaded.") from None
+            ),
+        )
 
-            async with self._lock(doc_id):
-                await self._update(ctx, doc_id, status=DocumentStatus.PROCESSING.value)
-                report = _IndexReport()
-                try:
-                    planned = await self._plan_points(
-                        doc_id, 1, file_name, prepared.file_type, prepared, meta
-                    )
-                    await self._embed_and_upsert(ctx, owner, planned, report)
-                    await self._verify(ctx, doc_id, len(planned))
-                    report.added = len(planned)
-                    storage_path = await asyncio.to_thread(
-                        self._store_files,
-                        owner,
-                        doc_id,
-                        file.path,
-                        prepared.file_type,
-                        self._chunk_manifest(planned),
-                    )
-                    row = await self._update(
-                        ctx,
-                        doc_id,
-                        status=DocumentStatus.READY.value,
-                        chunk_count=len(planned),
-                        storage_path=storage_path,
-                        pages_done=prepared.extracted.page_count,
-                        last_ingest=self._report_dict(prepared, report),
-                        error=None,
-                    )
-                except Exception as exc:
-                    await self._fail(ctx, doc_id, exc)
-                    if isinstance(exc, AppError):
-                        raise
-                    raise AppError(
-                        ErrorCode.DEPENDENCY_UNAVAILABLE, "Indexing failed; the document was not stored."
-                    ) from exc
+        async with self._lock(doc_id):
+            await self._update(ctx, doc_id, status=DocumentStatus.PROCESSING.value)
+            report = _IndexReport()
+            try:
+                row = await self._index_new(ctx, owner, doc_id, file_name, prepared, meta, file.path, report)
+            except Exception as exc:
+                await self._fail(ctx, doc_id, exc)
+                if isinstance(exc, AppError):
+                    raise
+                raise AppError(
+                    ErrorCode.DEPENDENCY_UNAVAILABLE, "Indexing failed; the document was not stored."
+                ) from exc
         log.info(
             "ingest.ready",
             doc_id=doc_id,
@@ -691,17 +853,149 @@ class IngestionService:
             chunks=report.added,
             ocr_pages=prepared.extracted.ocr_pages,
         )
-        return self._out(row), False
+        return self._out(row)
 
-    async def _fail(self, ctx: TenantContext, doc_id: str, exc: BaseException) -> None:
+    async def _start_upload_job(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        file: UploadedFile,
+        file_name: str,
+        file_type: str,
+        file_sha: str,
+        pages: int,
+        metadata: DocumentMetadata,
+        source_url: str | None,
+        doc_type: str | None,
+    ) -> DocumentOut:
+        """Create the PENDING row, keep a copy of the file, spawn the job. The slot is the caller's."""
+        self._check_queue()
+        doc_id = new_document_id()
+        stored = self._doc_dir(owner, doc_id) / f"original.{file_type}"
+        await asyncio.to_thread(self._copy_file, file.path, stored)
+        try:
+            title = metadata.title or _title_from_file_name(file_name)
+            meta = _Meta(
+                title=title[:300],
+                agency=metadata.agency,
+                jurisdiction=metadata.jurisdiction.value if metadata.jurisdiction else None,
+                topic=metadata.topic,
+                effective_date=metadata.effective_date,
+                source_url=source_url,
+                doc_type=doc_type,
+            )
+            row = self._upload_row(
+                ctx,
+                owner,
+                doc_id,
+                file_name,
+                file_type,
+                file_sha,
+                file.size_bytes,
+                meta,
+                text_sha=None,
+                language=None,
+                pages=pages,
+                is_ocr=False,
+            )
+            await self._add_row(ctx, owner, row)
+        except BaseException:
+            await asyncio.to_thread(shutil.rmtree, self._doc_dir(owner, doc_id), True)
+            raise
+        out = self._out(row)
+        stored_file = UploadedFile(file_name=file_name, path=stored, size_bytes=file.size_bytes)
+        job = self._run_upload_job(
+            ctx, owner, doc_id, stored_file, file_type, file_sha, metadata, source_url, doc_type
+        )
+        self._spawn(doc_id, owner, job)
+        return out
+
+    @staticmethod
+    def _copy_file(source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    @staticmethod
+    def _remove_quietly(path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:  # locked on Windows: leave it, the document directory goes with the document
+            log.warning("ingest.file_cleanup_failed")
+
+    def _progress_writer(self, ctx: TenantContext, doc_id: str, total: int) -> ProgressFn:
+        last = 0
+
+        async def tick(fraction: float) -> None:
+            nonlocal last
+            done = min(round(total * fraction), total - 1) if total > 0 else 0  # READY sets the total
+            if done > last:
+                last = done
+                await self._update_alive(ctx, doc_id, pages_done=done)
+
+        return tick
+
+    async def _run_upload_job(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        doc_id: str,
+        file: UploadedFile,
+        file_type: str,
+        file_sha: str,
+        metadata: DocumentMetadata,
+        source_url: str | None,
+        doc_type: str | None,
+    ) -> None:
+        try:
+            async with self._workers, self._lock(doc_id):
+                await self._update(ctx, doc_id, status=DocumentStatus.PROCESSING.value)
+                prepared = await self._extract(file, file_type, file_sha)
+                await self._check_content_duplicate(ctx, owner, prepared.text_sha256, file_sha=file_sha)
+                await self._check_chunk_quota(ctx, owner, len(prepared.chunks), None)
+                meta = self._infer_meta(metadata, prepared, file.file_name, source_url, doc_type)
+                pages = prepared.extracted.page_count
+                await self._update(
+                    ctx,
+                    doc_id,
+                    title=meta.title,
+                    agency=meta.agency,
+                    jurisdiction=meta.jurisdiction,
+                    topic=meta.topic,
+                    effective_date=meta.effective_date,
+                    source_url=meta.source_url,
+                    text_sha256=prepared.text_sha256,
+                    language=prepared.language,
+                    pages=pages,
+                    pages_total=pages,
+                    is_ocr=prepared.is_ocr,
+                )
+                report = _IndexReport()
+                await self._index_new(
+                    ctx,
+                    owner,
+                    doc_id,
+                    file.file_name,
+                    prepared,
+                    meta,
+                    file.path,
+                    report,
+                    self._progress_writer(ctx, doc_id, pages),
+                )
+            log.info("ingest.ready", doc_id=doc_id, file_type=file_type, chunks=report.added, background=True)
+        except asyncio.CancelledError:
+            await asyncio.shield(self._fail(ctx, doc_id, "Ingestion was interrupted."))
+            raise
+        except Exception as exc:
+            await self._fail(ctx, doc_id, exc)
+
+    async def _fail(self, ctx: TenantContext, doc_id: str, exc: BaseException | str) -> None:
         """PROCESSING → FAILED: delete partial points (compensation), keep the row with the error."""
-        log.warning("ingest.failed", doc_id=doc_id, error=type(exc).__name__)
+        log.warning("ingest.failed", doc_id=doc_id, error=_detail(exc))
         try:
             await self.store.delete_document(ctx, doc_id)
         except Exception as cleanup:
             log.error("ingest.cleanup_failed", doc_id=doc_id, error=type(cleanup).__name__)
-        detail = exc.detail if isinstance(exc, AppError) else type(exc).__name__
-        await self._update(ctx, doc_id, status=DocumentStatus.FAILED.value, error=str(detail)[:500])
+        await self._update_alive(ctx, doc_id, status=DocumentStatus.FAILED.value, error=_detail(exc))
 
     async def list(
         self,
@@ -745,7 +1039,9 @@ class IngestionService:
         changes = metadata.model_dump(exclude_unset=True)
         if "jurisdiction" in changes and changes["jurisdiction"] is not None:
             changes["jurisdiction"] = Jurisdiction(changes["jurisdiction"]).value
+        await self._guard_idle(ctx, doc_id)  # before the lock: a running job holds it
         async with self._lock(doc_id), self.db.session(ctx) as s:
+            self._ensure_idle(doc_id)
             row = await self._load(s, ctx, doc_id)
             ctx.ensure_writable(row.user_id)
             if row.status == DocumentStatus.DELETING.value:
@@ -798,14 +1094,18 @@ class IngestionService:
 
     async def replace(self, ctx: TenantContext, doc_id: str, file: UploadedFile) -> tuple[DocumentOut, bool]:
         file_name = _safe_file_name(file.file_name)
+        await self._guard_idle(ctx, doc_id)  # before the lock: a running job holds it
         async with self._lock(doc_id):
+            self._ensure_idle(doc_id)
             async with self.db.session(ctx) as s:
                 row = await self._load(s, ctx, doc_id)
                 ctx.ensure_writable(row.user_id)
             if row.status == DocumentStatus.DELETING.value:
                 raise AppError(ErrorCode.NOT_FOUND, "Document not found.")
             owner = row.user_id
-            async with self._job_slot(ctx, owner):
+            self._acquire_slot(ctx, owner)
+            handed_off = False  # a background job releases the slot itself when it ends
+            try:
                 file_type, file_sha = await self._validate(file)
                 if file_sha == row.file_sha256:
                     raise AppError(
@@ -814,6 +1114,13 @@ class IngestionService:
                         extra={"document_id": doc_id, "version": row.version},
                     )
                 await self._check_file_duplicate(ctx, owner, file_sha, exclude=doc_id)
+                large, pages = await self._is_large(file, file_type)
+                if large:
+                    out = await self._start_replace_job(
+                        ctx, owner, doc_id, row, file, file_name, file_type, file_sha, pages
+                    )
+                    handed_off = True
+                    return out, True
                 prepared = await self._extract(file, file_type, file_sha)
                 await self._check_content_duplicate(ctx, owner, prepared.text_sha256, exclude=doc_id)
                 await self._check_chunk_quota(ctx, owner, len(prepared.chunks), doc_id)
@@ -821,65 +1128,8 @@ class IngestionService:
                 await self._update(ctx, doc_id, status=DocumentStatus.UPDATING.value)
                 report = _IndexReport()
                 try:
-                    inferred = self._infer_meta(
-                        DocumentMetadata(), prepared, file_name, row.source_url, row.doc_type
-                    )
-                    meta = _Meta(
-                        title=row.title or inferred.title,
-                        agency=row.agency or inferred.agency,
-                        jurisdiction=row.jurisdiction or inferred.jurisdiction,
-                        topic=row.topic or inferred.topic,
-                        effective_date=inferred.effective_date or row.effective_date,
-                        source_url=row.source_url or inferred.source_url,
-                        doc_type=row.doc_type,
-                    )
-                    version = row.version + 1
-                    planned = await self._plan_points(
-                        doc_id, version, file_name, prepared.file_type, prepared, meta
-                    )
-                    old_ids = await self.store.point_ids(ctx, doc_id)
-                    new_ids = {p.point_id for p in planned}
-                    add = [p for p in planned if p.point_id not in old_ids]
-                    keep = [p for p in planned if p.point_id in old_ids]
-                    remove = sorted(old_ids - new_ids)
-                    await self._embed_and_upsert(ctx, owner, add, report)
-                    await self._set_payloads(ctx, keep)
-                    if remove:
-                        await self.store.delete_points(ctx, remove)
-                    await self._verify(ctx, doc_id, len(planned))
-                    report.added, report.kept, report.removed = len(add), len(keep), len(remove)
-                    storage_path = await asyncio.to_thread(
-                        self._store_files,
-                        owner,
-                        doc_id,
-                        file.path,
-                        prepared.file_type,
-                        self._chunk_manifest(planned),
-                    )
-                    row = await self._update(
-                        ctx,
-                        doc_id,
-                        status=DocumentStatus.READY.value,
-                        version=version,
-                        file_name=file_name,
-                        file_type=prepared.file_type,
-                        size_bytes=file.size_bytes,
-                        file_sha256=prepared.file_sha256,
-                        text_sha256=prepared.text_sha256,
-                        storage_path=storage_path,
-                        title=meta.title,
-                        agency=meta.agency,
-                        jurisdiction=meta.jurisdiction,
-                        topic=meta.topic,
-                        effective_date=meta.effective_date,
-                        language=prepared.language,
-                        pages=prepared.extracted.page_count,
-                        pages_total=prepared.extracted.page_count,
-                        pages_done=prepared.extracted.page_count,
-                        chunk_count=len(planned),
-                        is_ocr=prepared.is_ocr,
-                        last_ingest=self._report_dict(prepared, report),
-                        error=None,
+                    row = await self._apply_replace(
+                        ctx, owner, doc_id, row, file_name, file.size_bytes, prepared, file.path, report
                     )
                 except Exception as exc:
                     await self._compensate_update(ctx, doc_id, report, previous_status, exc)
@@ -889,6 +1139,14 @@ class IngestionService:
                         ErrorCode.DEPENDENCY_UNAVAILABLE,
                         "The update failed; the previous version is still served.",
                     ) from exc
+            finally:
+                if not handed_off:
+                    self._release_slot(owner)
+        self._log_replaced(doc_id, row, report)
+        return self._out(row), False
+
+    @staticmethod
+    def _log_replaced(doc_id: str, row: Document, report: _IndexReport) -> None:
         log.info(
             "ingest.replaced",
             doc_id=doc_id,
@@ -898,7 +1156,144 @@ class IngestionService:
             removed=report.removed,
             embedded=report.embedded,
         )
-        return self._out(row), False
+
+    async def _apply_replace(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        doc_id: str,
+        row: Document,
+        file_name: str,
+        size_bytes: int,
+        prepared: _Prepared,
+        source: Path,
+        report: _IndexReport,
+        progress: ProgressFn | None = None,
+    ) -> Document:
+        """The §5.4 diff upsert and the READY update, shared by the inline and the background replace."""
+        inferred = self._infer_meta(DocumentMetadata(), prepared, file_name, row.source_url, row.doc_type)
+        meta = _Meta(
+            title=row.title or inferred.title,
+            agency=row.agency or inferred.agency,
+            jurisdiction=row.jurisdiction or inferred.jurisdiction,
+            topic=row.topic or inferred.topic,
+            effective_date=inferred.effective_date or row.effective_date,
+            source_url=row.source_url or inferred.source_url,
+            doc_type=row.doc_type,
+        )
+        version = row.version + 1
+        planned = await self._plan_points(doc_id, version, file_name, prepared.file_type, prepared, meta)
+        old_ids = await self.store.point_ids(ctx, doc_id)
+        new_ids = {p.point_id for p in planned}
+        add = [p for p in planned if p.point_id not in old_ids]
+        keep = [p for p in planned if p.point_id in old_ids]
+        remove = sorted(old_ids - new_ids)
+        await self._embed_and_upsert(ctx, owner, add, report, progress)
+        await self._set_payloads(ctx, keep)
+        if remove:
+            await self.store.delete_points(ctx, remove)
+        await self._verify(ctx, doc_id, len(planned))
+        report.added, report.kept, report.removed = len(add), len(keep), len(remove)
+        storage_path = await asyncio.to_thread(
+            self._store_files, owner, doc_id, source, prepared.file_type, self._chunk_manifest(planned)
+        )
+        return await self._update(
+            ctx,
+            doc_id,
+            status=DocumentStatus.READY.value,
+            version=version,
+            file_name=file_name,
+            file_type=prepared.file_type,
+            size_bytes=size_bytes,
+            file_sha256=prepared.file_sha256,
+            text_sha256=prepared.text_sha256,
+            storage_path=storage_path,
+            title=meta.title,
+            agency=meta.agency,
+            jurisdiction=meta.jurisdiction,
+            topic=meta.topic,
+            effective_date=meta.effective_date,
+            language=prepared.language,
+            pages=prepared.extracted.page_count,
+            pages_total=prepared.extracted.page_count,
+            pages_done=prepared.extracted.page_count,
+            chunk_count=len(planned),
+            is_ocr=prepared.is_ocr,
+            last_ingest=self._report_dict(prepared, report),
+            error=None,
+        )
+
+    async def _start_replace_job(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        doc_id: str,
+        row: Document,
+        file: UploadedFile,
+        file_name: str,
+        file_type: str,
+        file_sha: str,
+        pages: int,
+    ) -> DocumentOut:
+        """Keep a copy of the new file, mark the row UPDATING, spawn the job. The slot is the caller's."""
+        self._check_queue()
+        incoming = self._doc_dir(owner, doc_id) / f"incoming.{file_type}"
+        await asyncio.to_thread(self._copy_file, file.path, incoming)
+        previous_status = row.status
+        try:
+            updating = await self._update(
+                ctx, doc_id, status=DocumentStatus.UPDATING.value, pages_done=0, pages_total=pages
+            )
+        except BaseException:
+            await asyncio.to_thread(self._remove_quietly, incoming)
+            raise
+        stored_file = UploadedFile(file_name=file_name, path=incoming, size_bytes=file.size_bytes)
+        job = self._run_replace_job(ctx, owner, doc_id, stored_file, file_type, file_sha, previous_status)
+        self._spawn(doc_id, owner, job)
+        return self._out(updating)
+
+    async def _run_replace_job(
+        self,
+        ctx: TenantContext,
+        owner: str,
+        doc_id: str,
+        file: UploadedFile,
+        file_type: str,
+        file_sha: str,
+        previous_status: str,
+    ) -> None:
+        report = _IndexReport()
+        try:
+            async with self._workers, self._lock(doc_id):
+                async with self.db.session(ctx) as s:
+                    row = await self._load(s, ctx, doc_id)
+                prepared = await self._extract(file, file_type, file_sha)
+                await self._check_content_duplicate(ctx, owner, prepared.text_sha256, exclude=doc_id)
+                await self._check_chunk_quota(ctx, owner, len(prepared.chunks), doc_id)
+                pages = prepared.extracted.page_count
+                await self._update(ctx, doc_id, pages_total=pages)
+                row = await self._apply_replace(
+                    ctx,
+                    owner,
+                    doc_id,
+                    row,
+                    file.file_name,
+                    file.size_bytes,
+                    prepared,
+                    file.path,
+                    report,
+                    self._progress_writer(ctx, doc_id, pages),
+                )
+            self._log_replaced(doc_id, row, report)
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                self._compensate_update(ctx, doc_id, report, previous_status, "Ingestion was interrupted.")
+            )
+            raise
+        except Exception as exc:
+            await self._compensate_update(ctx, doc_id, report, previous_status, exc)
+        finally:
+            await asyncio.to_thread(self._remove_quietly, file.path)
 
     async def _set_payloads(self, ctx: TenantContext, points: Sequence[_PlannedPoint]) -> None:
         semaphore = asyncio.Semaphore(SET_PAYLOAD_CONCURRENCY)
@@ -910,24 +1305,35 @@ class IngestionService:
         await asyncio.gather(*(one(p) for p in points))
 
     async def _compensate_update(
-        self, ctx: TenantContext, doc_id: str, report: _IndexReport, previous_status: str, exc: BaseException
+        self,
+        ctx: TenantContext,
+        doc_id: str,
+        report: _IndexReport,
+        previous_status: str,
+        exc: BaseException | str,
     ) -> None:
         """UPDATING → READY_STALE: delete the points this attempt added; the old version keeps serving."""
-        log.warning("ingest.update_failed", doc_id=doc_id, error=type(exc).__name__)
+        log.warning(
+            "ingest.update_failed", doc_id=doc_id, error=exc if isinstance(exc, str) else type(exc).__name__
+        )
         try:
             if report.written:
                 await self.store.delete_points(ctx, report.written)
         except Exception as cleanup:
             log.error("ingest.cleanup_failed", doc_id=doc_id, error=type(cleanup).__name__)
-        detail = exc.detail if isinstance(exc, AppError) else type(exc).__name__
         status = (
             DocumentStatus.READY_STALE.value
             if previous_status != DocumentStatus.FAILED.value
             else previous_status
         )
-        await self._update(ctx, doc_id, status=status, error=str(detail)[:500])
+        await self._update_alive(ctx, doc_id, status=status, error=_detail(exc))
 
     async def delete(self, ctx: TenantContext, doc_id: str) -> None:
+        if (task := self._tasks.get(doc_id)) is not None:  # E28: stop the background job first
+            async with self.db.session(ctx) as s:
+                ctx.ensure_writable((await self._load(s, ctx, doc_id)).user_id)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         async with self._lock(doc_id):
             async with self.db.session(ctx) as s:
                 row = await self._load(s, ctx, doc_id)
