@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     candidates_k: int = 20
     context_k: int = 5
     tau_keep: float = 0.2
-    tau_refuse: float = 0.3
+    tau_refuse: float = 0.2  # tuned on the dev split, 27 Nov (EVAL.md "Threshold tuning")
     dedupe_cosine: float = 0.95
     quote_match_min: int = 90
 
