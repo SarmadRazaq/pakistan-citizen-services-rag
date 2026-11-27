@@ -69,3 +69,4 @@ Thumbs.db
 
 # written by scripts/check_models.py; depends on the API key in use
 evals/configs/models_available.json
+*.stackdump

@@ -31,7 +31,12 @@ def test_ids_are_unique() -> None:
 
 def test_source_ids_exist_in_seed_list() -> None:
     seed = SEED.read_text(encoding="utf-8")
-    missing = {sid for item in _items() for sid in item.source_ids if f"| {sid} |" not in seed}
+
+    def listed(sid: str) -> bool:
+        # A seed row may cover several pages saved as sub-sources (TX-02 -> TX-02a, TX-02b, ...).
+        return f"| {sid} |" in seed or f"| {sid.rstrip('abcdefghijklmnopqrstuvwxyz')} |" in seed
+
+    missing = {sid for item in _items() for sid in item.source_ids if not listed(sid)}
     assert missing == set()
 
 
