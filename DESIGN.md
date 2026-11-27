@@ -40,8 +40,10 @@ The audience is the general public, and the intermediaries who already help them
 helpdesks). The Official corpus is public government material that everyone can search. A User can also upload
 private Documents that only they can search. The service gives information, not legal or tax advice.
 
-The stack is FastAPI, LangGraph, Qdrant, SQLite, hosted NVIDIA models and a Next.js frontend. All models run on
-hosted NVIDIA APIs; only Tesseract OCR runs locally, so no GPU is needed.
+The stack is FastAPI, LangGraph, Qdrant, SQLite and a Next.js frontend. In the evaluated configuration the LLMs and
+embeddings are hosted on the OpenAI API, while the reranker (on the GPU) and Tesseract OCR run locally. The model
+providers are settings, not code: the NVIDIA open-weight setup of the original plan and a fully local setup run on
+the same code (section 4.7).
 
 ---
 
@@ -68,12 +70,12 @@ flowchart LR
     DB[(SQLite<br/>users, documents,<br/>request_log, feedback)]
     FS[(storage/<br/>original files,<br/>chunk manifests)]
   end
-  subgraph NVIDIA["NVIDIA hosted APIs"]
-    EMB[baai/bge-m3<br/>embeddings]
-    RR[nv-rerankqa-1b-v2<br/>reranker]
-    JB[NemoGuard<br/>jailbreak-detect]
-    LLM[Generation chain<br/>DeepSeek V3.1 > Qwen3-235B > Llama 3.3 70B]
+  subgraph Hosted["Hosted APIs (OpenAI profile, section 4.7)"]
+    EMB[text-embedding-3-large<br/>1024-d embeddings]
+    LLM[Generation chain<br/>gpt-4.1-mini > gpt-4o-mini]
   end
+  RR[bge-reranker-v2-m3<br/>reranker, local GPU]
+  JB[Jailbreak classifier<br/>optional, off in this profile]
   OL[Ollama<br/>optional local fallback]
   OCR[Tesseract<br/>eng+urd, local]
 
@@ -110,7 +112,7 @@ the larger parts into packages.
 | `config.py` | [app/config.py](app/config.py) | The only place tunables live (pydantic-settings). Secrets are `SecretStr`. Production start-up checks. |
 | `schemas.py` | [app/schemas.py](app/schemas.py), [app/protocols.py](app/protocols.py) | Request and response models (pydantic), and the protocols (`Embedder`, `VectorStore`, `Reranker`, `Retriever`, `LLMClient`, ...) every layer depends on. |
 | `ingestion/` | [app/ingestion/](app/ingestion/) | `validation.py`, `extractors/` (pdf, docx, pptx, html, markdown, text), `ocr.py`, `text_quality.py`, `cleaning.py`, `chunking.py`, `metadata.py`, `language.py`, `guards.py`, `service.py`. |
-| `retrieval.py` | [app/retrieval/](app/retrieval/) | `hosted.py` (NVIDIA embedder, reranker, jailbreak classifier), `embedder.py` and `reranker.py` (optional local models), `vector_store.py` (the only module that imports Qdrant), `retriever.py` (variants, RRF, dedupe, rerank), `factory.py`. |
+| `retrieval.py` | [app/retrieval/](app/retrieval/) | `hosted.py` (OpenAI and NVIDIA embedders, the NVIDIA reranker and jailbreak classifier, the sparse encoder), `embedder.py` and `reranker.py` (local models; the local reranker is the one in use), `vector_store.py` (the only module that imports Qdrant), `retriever.py` (variants, RRF, dedupe, rerank), `factory.py`. |
 | `generation.py` | [app/generation/](app/generation/) | `graph.py` (LangGraph pipeline), `prompts.py`, `query_understanding.py`, `answer.py` (JSON parsing and citation verification), `llm.py` (model chain), `service.py`. |
 | `guardrails.py` | [app/guardrails/](app/guardrails/) | `input_guards.py`, `output_guards.py`, `advice.py`, `emergency.py`, `patterns/*.yaml`, `referrals.yaml`. Document guardrails are in `app/ingestion/validation.py` and `guards.py`. |
 | `main.py` | [app/main.py](app/main.py), [app/api/](app/api/) | `main.py` only wires: middleware, error handlers, routers, services. |
@@ -166,7 +168,7 @@ flowchart TD
   D2 -- yes --> E409b[409 duplicate_content]
   D2 -- no --> M[Metadata: agency, jurisdiction, topic,<br/>effective date, language, section path,<br/>is_table, is_ocr, injection score]
   M --> ID[Deterministic point id =<br/>uuid5 of doc id, chunk hash, occurrence]
-  ID --> EM[Embed in batches of 32:<br/>dense from NVIDIA, sparse locally]
+  ID --> EM[Embed in batches of 32:<br/>dense from the hosted embedder,<br/>sparse locally]
   EM --> UP[Upsert to Qdrant, wait=true]
   UP --> VF[Verify: Qdrant point count<br/>equals planned chunk count]
   VF --> R[Status READY, store original file<br/>and chunk manifest<br/>201 Created, or the 202 job finishes]
@@ -208,14 +210,14 @@ Step by step, in the order the code runs ([app/ingestion/service.py](app/ingesti
     form, else the PDF page header ("Date of issue: ..."), else a date pattern in the text. Each chunk gets its
     Language and script, page range, section path, `is_table`, `is_ocr`, and an injection score.
 12. **Injection scoring** ([guards.py](app/ingestion/guards.py)). A pattern heuristic, combined with the
-    NemoGuard classifier when it is configured. A chunk scoring 0.5 or more is flagged, not dropped (it may
+    hosted jailbreak classifier when one is configured (`INJECTION_PROVIDER`; off in the evaluated setup). A chunk scoring 0.5 or more is flagged, not dropped (it may
     legitimately quote such phrases) and is always handed to the model as data.
 13. **Deterministic point ids** ([app/core/ids.py](app/core/ids.py)). `uuid5(namespace, doc_id:chunk_hash:occurrence)`,
     where `chunk_hash` is the SHA-256 of the normalised chunk text. Re-ingesting the same chunk writes the same
     point, so ingestion is idempotent and an update only has to embed what changed.
 14. **Embed.** The embedding text is the chunk text with a short header
     (`agency (jurisdiction) > title > section`); the stored display text stays clean. Batches of `EMBED_BATCH_SIZE`
-    (32). The dense vector comes from `baai/bge-m3` on the NVIDIA API (1024 dimensions, cosine). The sparse
+    (32). The dense vector comes from the configured embedder (`text-embedding-3-large` at 1024 dimensions in the evaluated setup, cosine). The sparse
     vector comes from a built-in lexical encoder (section 4.4).
 15. **Upsert** to Qdrant in batches of 256 with `wait=true`, so a returned call means the points are stored.
 16. **Verify.** The service counts the Document's points in Qdrant and compares with the number planned. A
@@ -257,7 +259,7 @@ Jobs run inside the API process on an `asyncio` semaphore. A restart cancels the
 
 ```mermaid
 flowchart TD
-  A[POST /api/v1/ask] --> GI[guard_input<br/>sanitise, length, obfuscation,<br/>injection and jailbreak patterns,<br/>NemoGuard classifier, emergency check]
+  A[POST /api/v1/ask] --> GI[guard_input<br/>sanitise, length, obfuscation,<br/>injection and jailbreak patterns,<br/>optional classifier, emergency check]
   GI -- blocked --> E400[400 problem+json]
   GI --> CC[corpus_check<br/>any servable Document in Scope?]
   CC -- none --> RF
@@ -281,9 +283,9 @@ re-raised by the service.
 
 | # | Node | What it does | Can end in |
 |---|---|---|---|
-| 1 | `guard_input` | Strip invisible and bidi characters, NFKC, check length (`max_question_chars` 2000), obfuscation ratio, injection and jailbreak patterns (English, Urdu, Roman Urdu, plus base64, rot13, leetspeak and homoglyph variants), NemoGuard score. Sets the emergency flag from patterns. | 400 / 422 |
+| 1 | `guard_input` | Strip invisible and bidi characters, NFKC, check length (`max_question_chars` 2000), obfuscation ratio, injection and jailbreak patterns (English, Urdu, Roman Urdu, plus base64, rot13, leetspeak and homoglyph variants), and the classifier score when a classifier is configured. Sets the emergency flag from patterns. | 400 / 422 |
 | 2 | `corpus_check` | Counts servable Documents in Scope (and in `doc_ids` when given). | Refusal `no_documents` |
-| 3 | `understand` | One call to the helper model (`meta/llama-3.3-70b-instruct`) returns the question's Language, an English and an Urdu-script rewrite, up to 3 sub-questions, agencies, Jurisdictions, advice, off-topic, injection-suspect and emergency flags. Code detects the Language too, and the Answer language defaults to the question's. | Refusal `off_topic` |
+| 3 | `understand` | One call to the helper model (`gpt-4.1-mini` in the evaluated setup) returns the question's Language, an English and an Urdu-script rewrite, up to 3 sub-questions, agencies, Jurisdictions, advice, off-topic, injection-suspect and emergency flags. Code detects the Language too, and the Answer language defaults to the question's. | Refusal `off_topic` |
 | 4 | `retrieve` | The retriever (section 4.6) embeds every query variant, runs hybrid search for each in parallel, fuses with RRF, dedupes, reranks the top `candidates_k` (20) and keeps up to `context_k` (5) with rerank score at least `tau_keep` (0.2), and always at least one. A detected agency or province filter that finds nothing is relaxed and the relaxation is recorded as a flag. | none |
 | 5 | `relevance_gate` | Refuses before calling the generator when there is no context or the best rerank score is below `tau_refuse` (0.3). | Refusal `insufficient_context` |
 | 6 | `generate` | Builds the prompt (section 4.8) and calls the model chain. Private chunks follow `private_context_policy`. | 503 |
@@ -491,66 +493,71 @@ text: a small price for boundary safety.
 
 ### 4.4 Embedding model
 
-**Choice.** `baai/bge-m3` through the NVIDIA API catalog (`POST /v1/embeddings`), 1024 dimensions, cosine
-similarity. Config: `EMBEDDING_PROVIDER=nvidia`, `HOSTED_EMBEDDING_MODEL=baai/bge-m3`,
-`EMBEDDING_DIMENSION=1024`. The same model can run locally (`EMBEDDING_PROVIDER=local`, BGE-M3 on a GPU) with no
-other change. The BGE-M3 tokenizer is always used locally to size chunks.
+**Choice (the evaluated configuration).** OpenAI `text-embedding-3-large` (`POST /v1/embeddings`), asked for
+**1024 dimensions** with the API's `dimensions` parameter, cosine similarity. Config:
+`EMBEDDING_PROVIDER=openai`, `OPENAI_EMBEDDING_MODEL=text-embedding-3-large`, `EMBEDDING_DIMENSION=1024`
+([OpenAIEmbedder](app/retrieval/hosted.py)). The BGE-M3 tokenizer is still used locally to size chunks, so chunk
+sizes do not depend on which embedder is configured.
 
-The sparse half of hybrid search is **not** BGE-M3's own sparse output. The hosted API returns dense vectors
-only, so a built-in encoder ([hosted.py](app/retrieval/hosted.py), `LexicalSparseEncoder`) produces the sparse
-vector: text is NFKC-normalised, Urdu letter variants unified, Urdu digits converted to ASCII, diacritics
-stripped, case folded; English, Roman Urdu and Urdu stopwords removed; each token is hashed to a 31-bit index
-and weighted with BM25-style term-frequency saturation (k1 1.2, b 0.75). A query weights each unique token 1.0.
-There is deliberately no IDF (see section 4.5, tenancy).
+The embedder is a provider setting, not a code change (section 4.7, "Provider profiles").
+- `EMBEDDING_PROVIDER=nvidia` uses `baai/bge-m3` on the NVIDIA API catalog.
+- `EMBEDDING_PROVIDER=local` runs BGE-M3 on a local GPU.
 
-**Why.**
+All three produce 1024-dimension vectors, so the Qdrant schema is the same. Vectors from different models are
+**not** comparable, though: switching provider needs a full re-index (section 12).
 
-| Criterion | BGE-M3 |
+The sparse half of hybrid search comes from a built-in encoder in every hosted configuration, because neither
+hosted API returns a sparse vector ([hosted.py](app/retrieval/hosted.py), `LexicalSparseEncoder`):
+- **Normalisation:** text is NFKC-normalised, Urdu letter variants are unified, Urdu digits are converted to ASCII,
+  diacritics are stripped and case is folded.
+- **Stopwords:** English, Roman Urdu and Urdu stopwords are removed.
+- **Weighting:** each token is hashed to a 31-bit index and weighted with BM25-style term-frequency saturation
+  (k1 1.2, b 0.75). A query weights each unique token 1.0.
+- **No IDF,** deliberately (see section 4.5, tenancy).
+
+**Why `text-embedding-3-large`.**
+
+| Criterion | text-embedding-3-large at 1024 dimensions |
 |---|---|
-| Quality | Strong on multilingual retrieval benchmarks. |
-| Language support | 100+ languages including Urdu. An Urdu question lands near the matching English passage, which is the cross-lingual case this service needs. |
-| Dimensions | 1024: a good size for quality against storage. |
-| Context | Accepts long inputs (up to 8k tokens), so a 512-token chunk with a header is never truncated. |
-| Licence | MIT, so the hosted and the local deployments are the same model. |
-| Cost | Hosted on the NVIDIA free tier, within `LLM_MAX_RPM` and the credit limits. |
-| Where it runs | Hosted by default: no GPU, small Docker image, consistent behaviour on any machine. Local is a config switch. |
+| Availability | Works with the same OpenAI account and key as the LLM. The NVIDIA catalog that hosted BGE-M3 is not available to this project (section 4.7). |
+| Quality | OpenAI's strongest embedding model and multilingual, so an Urdu question can land near the matching English passage. How well it does on **Urdu and Roman Urdu** here is unmeasured until the evaluation runs. |
+| Dimensions | The model supports shortened vectors through `dimensions`. 1024 keeps the same collection size and schema as BGE-M3, at a small quality cost compared with the full 3072. |
+| Context | Up to about 8k input tokens, far above a 512-token chunk plus its header. |
+| Operations | No GPU and no model download for embeddings, so the Docker image stays small. |
 
 **Roman Urdu.** No embedding model is trained much on Roman Urdu, which has no standard spelling ("kya/kia",
 "pasport"). Rather than hope, the pipeline also rewrites the question into English and into Urdu script (one
 helper call) and searches all variants, then fuses the results (section 4.6).
 
-**Alternatives rejected.**
+**Alternatives rejected or kept as switches.**
 
-| Alternative | Why not |
+| Alternative | Status and reason |
 |---|---|
-| multilingual-e5-large | Strong dense model, but no sparse output, and it needs an `input_type` prefix discipline. A sensible comparison point, not run yet. |
-| OpenAI or Cohere embedding APIs | Not open-weight, send documents to another vendor, and cost money. |
-| NV-Embed-QA or other English-leaning NVIDIA embedders | Weaker on Urdu. |
+| BGE-M3 on the NVIDIA API (the earlier choice) | Kept as `EMBEDDING_PROVIDER=nvidia`. Open-weight (MIT) and strong on Urdu, but the NVIDIA catalog is not available to this project. |
+| BGE-M3 on the local GPU | Kept as `EMBEDDING_PROVIDER=local`. Nothing leaves the machine and it gives BGE-M3's learned sparse vectors. But it needs the 2.3 GB model and GPU memory the reranker already uses (section 4.6). |
+| `text-embedding-3-small` | Cheaper, but weaker on multilingual retrieval. The corpus is small enough that the cost difference is small. |
+| `text-embedding-3-large` at the full 3072 dimensions | Slightly better quality, but three times the vector storage and a different collection schema from the other providers. |
+| multilingual-e5-large | Strong dense model, but no sparse output, and it needs an `input_type` prefix discipline. A sensible comparison point, not run. |
 | BM25 alone | Breaks on Urdu word forms and on cross-lingual questions. |
-| A local GPU BGE-M3 as the default | Works (and is supported), but the project machine's GPU is small, and it makes the Docker image and deployment heavy. Kept as a switch. |
 
 **Trade-offs.**
 
-| | Hosted BGE-M3 (chosen) | Local BGE-M3 |
+| | OpenAI `text-embedding-3-large` (chosen) | Local BGE-M3 |
 |---|---|---|
-| Quality | Same model | Same model, plus its native sparse output |
-| Cost | Free tier, rate-limited | GPU electricity and hardware |
-| Latency | One network call per batch (query embeddings are cached in memory, 2048 entries) | Lower per call, but model load time |
-| Privacy | Chunk text goes to NVIDIA | Nothing leaves the machine |
-| Operations | Needs a key and connectivity (503 `dependency_unavailable` when down) | Needs a GPU |
-
-The cost of the hosted sparse encoder is that it is a plain keyword vector, not a learned one. Switching the
-embedder also changes sparse vectors, which is why the first run needs a full re-index (listed in
-[docs/HUMAN_TODO.md](docs/HUMAN_TODO.md)).
+| Quality | Strong multilingual dense vectors; the sparse half is a plain keyword vector | Learned dense and sparse vectors |
+| Cost | Paid per token, for every chunk at ingestion and every query. Query embeddings are cached in memory (2048 entries), and re-ingesting unchanged chunks re-embeds nothing. | Free per call; GPU time |
+| Latency | One network call per batch | No network, but the model has to load |
+| Privacy | Chunk text, including private uploads, goes to OpenAI | Nothing leaves the machine |
+| Operations | Needs the key and connectivity (503 `dependency_unavailable` when down) | Needs a GPU and the model download |
 
 **Evidence.**
 
-- [tests/unit/test_hosted_models.py](tests/unit/test_hosted_models.py) (27 tests, using `httpx.MockTransport`:
-  batching, retries, dimension checks, rerank score handling) and
-  [tests/unit/test_hosted_sparse.py](tests/unit/test_hosted_sparse.py) (14: normalisation, Urdu and Roman Urdu
-  tokens, deterministic hashing, no IDF).
-- A live check of the model id and key: [scripts/check_models.py](scripts/check_models.py) `--probe` (not yet
-  run with a real key, per the first-run checklist).
+- [tests/unit/test_hosted_models.py](tests/unit/test_hosted_models.py) uses `httpx.MockTransport` to cover
+  batching, retries, dimension checks, and the OpenAI and NVIDIA request shapes.
+- [tests/unit/test_hosted_sparse.py](tests/unit/test_hosted_sparse.py) covers normalisation, Urdu and Roman Urdu
+  tokens, deterministic hashing and the absence of IDF.
+- [scripts/check_models.py](scripts/check_models.py) `--probe` is a live check of the key, the model id and the
+  1024-dimension response.
 - **Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Configuration comparison" and "Multilingual"** (dense
   retrieval Hit@k and MRR by language; the English-twin gap for Urdu and Roman Urdu questions). No
   embedding-model comparison has been run, so the choice rests on the reasons above.
@@ -631,7 +638,7 @@ cross-encoder, with a relevance gate before generation.
 | `candidates_k` | 20 passed to the reranker | `config.py` |
 | RRF | `k=60`. Server-side between dense and sparse in Qdrant, then client-side across variants | `retriever.py` |
 | Dedupe | identical chunk hash collapses (a private copy beats the public one); near-duplicate text (rapidfuzz ratio at least 95, from `dedupe_cosine` 0.95) dropped below its better twin | `retriever.py` |
-| Reranker | `nvidia/llama-3.2-nv-rerankqa-1b-v2` (hosted cross-encoder); logits turned into scores in 0 to 1 with a sigmoid | `hosted.py` |
+| Reranker | `BAAI/bge-reranker-v2-m3` cross-encoder on the local GPU (`RERANKER_PROVIDER=local`), scores sigmoid-normalised to 0 to 1. Alternatives by setting: `nvidia` (hosted `nv-rerankqa-1b-v2`) or `none` (the gate uses dense similarity) | `reranker.py` |
 | `context_k` (top-k used as context) | 5 (request `top_k` 1 to 10 overrides) | `config.py` |
 | `tau_keep` | 0.2: a chunk below this rerank score is not given to the model (at least one is always kept) | `config.py` |
 | `tau_refuse` | 0.3: if the best rerank score is below this, refuse without calling the generator | `config.py` |
@@ -666,7 +673,7 @@ Documents.
 | Sparse only | No cross-lingual matching. |
 | Weighted score fusion | Needs tuning per corpus and per score scale. RRF needs none. |
 | No reranker | The first-stage score is a weak relevance signal for the gate. Comparison `R5_hybrid_no_rerank`. |
-| A proprietary rerank API | Against the open-weight decision, and another vendor. |
+| A hosted rerank API (Cohere, NVIDIA) | Another vendor and key, per-call cost and network latency. The open-weight `bge-reranker-v2-m3` is multilingual and fits on the 6 GB GPU next to nothing else (embeddings are hosted). The NVIDIA reranker stays a setting. |
 | Always call the LLM and hope it refuses | Slower, costs tokens, and less reliable than a score gate. |
 | A single similarity-score threshold on the dense score | Dense cosine scores are not comparable across queries or languages; the reranker's score is a better gate. |
 
@@ -679,9 +686,9 @@ Documents.
 | Latency | The rerank call, the helper call and (up to) three embedding calls add to latency. Variants and per-variant searches run in parallel with `asyncio.gather`. |
 | Refusal tuning | `tau_refuse` trades false refusals (answerable question refused) against hallucination risk. |
 
-**Threshold status.** `tau_keep` 0.2 and `tau_refuse` 0.3 were first set for the local BGE reranker. The reranker
-is now hosted, with a different score distribution. They have to be re-tuned on the dev split of the golden set
-(listed in [docs/HUMAN_TODO.md](docs/HUMAN_TODO.md)). The plan is to choose them on the dev split and report on
+**Threshold status.** `tau_keep` 0.2 and `tau_refuse` 0.3 were set for the local BGE reranker, which is the one
+in use again, but they are first guesses, not tuned on data. They have to be tuned on the dev split of the golden
+set. With `RERANKER_PROVIDER=none` they apply to dense similarity and must be re-tuned from scratch. The plan is to choose them on the dev split and report on
 the test split only, so the reported numbers are not tuned on.
 
 **Evidence.**
@@ -693,106 +700,160 @@ the test split only, so the reported numbers are not tuned on.
   [evals/metrics.py](evals/metrics.py) ([tests/unit/test_eval_metrics.py](tests/unit/test_eval_metrics.py)).
 - **Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Configuration comparison"** (`R4_hybrid_rerank`
   baseline against `R1_dense_only` and `R5_hybrid_no_rerank`; winner rule fixed in advance: maximise MRR@10 on
-  the test split, tie-break Hit@5, then p95 latency). The service does not read the `X-Eval-Config` override
-  header yet, so `R1` and `R5` cannot be run as real measurements until that support is added; the harness marks
-  such rows "NOT honoured" rather than reporting them.
+  the test split, tie-break Hit@5, then p95 latency). The service applies the `X-Eval-Config` override header
+  (`retrieval_mode`, `rerank`, `generation_model`) for admin callers when `EVAL_OVERRIDES_ENABLED=true`
+  ([app/core/eval_overrides.py](app/core/eval_overrides.py)), so `R1` and `R5` are real measurements on one
+  running service. The harness still marks a row "NOT honoured" if the service does not echo the header.
 
 ### 4.7 LLM
 
-**Choice.** Hosted open-weight models on the NVIDIA API catalog (OpenAI-compatible
-`POST /chat/completions` at `https://integrate.api.nvidia.com/v1`), tried in order with automatic fallback.
+**Choice (the evaluated configuration).** OpenAI chat models through the OpenAI API
+(`POST /chat/completions` at `https://api.openai.com/v1`, set as `LLM_BASE_URL`), tried in order with automatic
+fallback. The models are set in `.env`; [app/config.py](app/config.py) keeps the NVIDIA defaults.
 
-| Role | Model (default in `config.py`) |
+| Role | Model (`.env`) |
 |---|---|
-| Generation, 1st | `deepseek-ai/deepseek-v3.1` |
-| Generation, 2nd | `qwen/qwen3-235b-a22b` |
-| Generation, 3rd | `meta/llama-3.3-70b-instruct` |
-| Helper (query understanding) | `meta/llama-3.3-70b-instruct` |
-| Judge (evaluation only) | `openai/gpt-oss-120b` |
-| Local fallback (optional) | `qwen2.5:3b-instruct` through Ollama, answers marked `degraded` |
+| Generation, 1st | `gpt-4.1-mini` |
+| Generation, 2nd | `gpt-4o-mini` |
+| Helper (query understanding) | `gpt-4.1-mini` |
+| Judge (evaluation only) | `gpt-4o` |
+| Local fallback | off (`LOCAL_FALLBACK_ENABLED=false`); when on, `qwen2.5:3b-instruct` through Ollama, with answers marked `degraded` |
 
-**The model order is a hypothesis, not a result.** DeepSeek is first because it is a strong general open-weight
-model; Qwen3-235B is second because Qwen documents multilingual (including Urdu) support; Llama 3.3 70B is a
-dense, widely available third. Which one is best for Urdu and Roman Urdu is unknown until measured. The
-`G1`-`G3` generator comparison in [EVAL.md](EVAL.md) is meant to decide, with a selection rule fixed in
-advance: maximise judge correctness subject to faithfulness at least 0.85, refusal accuracy at least 0.8 and
-answer-language accuracy at least 0.9, tie-break by p95 latency, then fallback rate.
+**Provider profiles: what changed and why.** The first design used only hosted **open-weight** models on the
+NVIDIA API catalog: DeepSeek V3.1, Qwen3-235B and Llama 3.3 70B, plus BGE-M3 embeddings and NVIDIA's reranker and
+jailbreak classifier. The catalog is not offered to this project's account in Pakistan, so the evaluated setup
+moved to OpenAI. The code did not have to fork:
+- The LLM client talks to any OpenAI-compatible base URL (`LLM_BASE_URL`).
+- The embedder, reranker and injection classifier each have a provider setting (`nvidia`, `openai`, `local`,
+  `none`).
+- Readiness probes exactly the services the configuration uses ([app/core/health.py](app/core/health.py)).
+
+| | OpenAI profile (evaluated) | NVIDIA profile (original plan) | Fully local |
+|---|---|---|---|
+| LLM | `gpt-4.1-mini`, then `gpt-4o-mini` | DeepSeek V3.1, then Qwen3-235B, then Llama 3.3 70B | Qwen2.5-3B (Ollama), weak |
+| Embeddings | `text-embedding-3-large` at 1024 dimensions | `baai/bge-m3` | BGE-M3 on the GPU |
+| Reranker | `bge-reranker-v2-m3` on the local GPU | `nv-rerankqa-1b-v2` | `bge-reranker-v2-m3` |
+| Jailbreak classifier | none (pattern lists only) | NemoGuard jailbreak-detect | none |
+| Open-weight | No | Yes | Yes |
+| Cost | Paid per token | Free-tier credits | Free |
+
+The brief does not require open-weight models; that was a project preference. Dropping it costs openness and
+adds a per-token bill. In exchange the models are available and well documented. The NVIDIA profile still works,
+with a key and no code change.
+
+**Why these models.**
+- **`gpt-4.1-mini` goes first:** it follows long, strict instructions (the JSON schema, exact quotes, the
+  answer-language rule) at a low price.
+- **`gpt-4o-mini` is the fallback:** a cheaper model from another generation, so one outage is unlikely to take out
+  both.
+- **`gpt-4o` only judges:** a stronger model, used by the evaluation and never to answer users.
+
+**The order is a hypothesis, not a result.** Which model is best for Urdu and Roman Urdu is unknown until
+measured. The generator comparison in [EVAL.md](EVAL.md) decides, with a selection rule fixed in advance:
+- maximise judge correctness;
+- subject to faithfulness at least 0.85, refusal accuracy at least 0.8 and answer-language accuracy at least 0.9;
+- break ties by p95 latency, then by fallback rate.
+
+**Judge bias (an open risk).** The judge and the generator now come from the same vendor, and a judge can favour
+answers in its own style. The original plan avoided this by judging with a different model family. Two
+mitigations:
+- The reliability check: 30 hand-labelled answers and Cohen's kappa ([evals/calibration.py](evals/calibration.py)).
+- If kappa is low, a second judge from another vendor on a sample.
 
 **How reliability is built** ([app/generation/llm.py](app/generation/llm.py)). The router calls the API directly
-with `httpx` rather than through LangChain's chat class, because exact control over timeouts, retry rules and the
-rate limit is what reliability depends on, and it can be tested offline with `httpx.MockTransport`.
+with `httpx` rather than through LangChain's chat class. Exact control over timeouts, retry rules and the rate
+limit is what reliability depends on, and `httpx.MockTransport` lets it be tested offline.
 
-- Per attempt timeout `LLM_TIMEOUT_S` 45 s (helper 20 s), connect timeout 5 s. The whole hosted chain is capped
-  at twice the per-attempt timeout (90 s for generation).
-- 429 and 5xx are retried at most twice on the same model with exponential backoff and jitter, honouring
-  `Retry-After`. A request-caused 4xx is never retried.
-- A timeout or other error moves to the next model. A 401 skips every hosted model (the key is bad).
-- A circuit breaker per model opens after 3 consecutive failures and half-opens after 60 s, so a dead model is
-  skipped instead of waited on.
-- A client-side token bucket (`LLM_MAX_RPM` 35, burst 5) keeps requests under the NVIDIA free tier of about 40
-  per minute.
-- JSON mode (`response_format`) is requested, and if a model rejects it the call is retried once without it and
-  remembered. The pipeline still does not depend on JSON mode (section 4.8).
-- When every hosted model has failed: if `LOCAL_FALLBACK_ENABLED` the local model answers with `degraded=true`;
+- **Timeouts:** `LLM_TIMEOUT_S` is 45 s per attempt (20 s for the helper), with a 5 s connect timeout. The whole
+  hosted chain is capped at twice the per-attempt timeout (90 s for generation).
+- **Retries:** 429 and 5xx are retried at most twice on the same model, with exponential backoff and jitter,
+  honouring `Retry-After`. A request-caused 4xx is never retried.
+- **Failover:** a timeout or other error moves to the next model. A 401 skips every hosted model, because the key
+  is bad.
+- **Circuit breaker:** one per model. It opens after 3 consecutive failures and half-opens after 60 s, so a dead
+  model is skipped instead of waited on.
+- **Rate limit:** a client-side token bucket with a burst of 5. `LLM_MAX_RPM` is 300 in `.env` for OpenAI; the
+  default of 35 suits the NVIDIA free tier.
+- **JSON mode:** `response_format` is requested. If a model rejects it, the call is retried once without it, and
+  that is remembered. The pipeline still does not depend on JSON mode (section 4.8).
+- **When every model fails:** with `LOCAL_FALLBACK_ENABLED` the local model answers with `degraded=true`;
   otherwise the API returns 503 `llm_unavailable` with `Retry-After`.
 
-**Cost per question.** Hosted on NVIDIA free-tier credits: **$0 actual cost**. A question makes one helper call
-and one to three generation calls (first answer, one JSON repair, one regeneration; the normal case is two calls
-in total). The service records input and output tokens for every question
-(`usage` in the response and `request_log`). Converting tokens to a list-price-equivalent dollar figure is **not
-implemented yet** (the column and response field exist, the price table does not), so no dollar-per-question
-number can be given. Measured token counts per question: **pending** (EVAL.md "Ops" metrics).
+**Cost per question.** Every model call records its input and output tokens.
+[request_cost](app/observability/cost.py) multiplies them by `MODEL_PRICES` (USD per million input and output
+tokens, copied from OpenAI's pricing page into `.env`). On an OpenAI base URL the calls count as billed
+(`LLM_BILLED`), so `cost_usd` is real money, and the `/metrics` dashboard shows it per question.
 
-**Latency.** Not measured yet. Per question the latency is the sum of: input guard (local, plus one NemoGuard call
-if enabled), helper call, embedding of the variants, hybrid search, rerank, generation (the largest part), and
-any retry. Every `/ask` response carries a `latency_ms` breakdown by node and by retrieval stage, and the eval
-harness reports p50 and p95. **Numbers: pending, see [EVAL.md](EVAL.md) "Metrics" (Ops row).**
+A normal question makes:
+- one helper call;
+- one generation call, plus at most one JSON repair and one regeneration;
+- one embedding call per query variant (cached).
+
+The evaluation adds one `gpt-4o` judge call per question. Measured cost per question: **pending, see
+[EVAL.md](EVAL.md) "Ops" metrics.**
+
+**Latency.** Not measured yet. Per question it is the sum of:
+- the input guard (local);
+- the helper call;
+- embedding the variants;
+- hybrid search;
+- the local rerank;
+- generation (the largest part);
+- any retry.
+
+Every `/ask` response carries a `latency_ms` breakdown by node and by retrieval stage, and the eval harness
+reports p50 and p95. **Numbers: pending, see [EVAL.md](EVAL.md) "Metrics" (Ops row).**
 
 **Context window.** Not a constraint. A prompt is the system prompt (about 600 tokens), up to 5 chunks of up to
 512 tokens (plus their attributes), and the question: a few thousand tokens, far inside the window of every
 model in the chain. Output is capped at 1,200 tokens (`GENERATE_MAX_TOKENS`).
 
-**Data privacy.** Everything sent to the generator is processed by NVIDIA under its API terms.
+**Data privacy.** Everything sent to the generator and to the embedding API is processed by OpenAI under its API
+terms. Reranking runs on the local GPU.
 
 - Questions over the Official corpus send public government text. That is acceptable.
-- Private uploads follow `PRIVATE_CONTEXT_POLICY`. `hosted_with_notice` (default): the answer is generated by the
-  hosted model and carries a `third_party_processing` Notice, and the upload screen warns first. `local_only`:
-  any answer whose context contains a private chunk is generated by the local Ollama model, nothing private
-  leaves the machine, quality is lower, and the answer is marked degraded. `local_only` requires
-  `LOCAL_FALLBACK_ENABLED=true` (validated at start-up).
-- Embedding and reranking are also hosted, so chunk text of private Documents goes to NVIDIA at upload and at
-  question time even under `local_only` today. The README's statement that these "always run locally" is out of
-  date; `EMBEDDING_PROVIDER=local` and `RERANKER_PROVIDER=local` are the way to keep them on the machine.
-- Logs never contain the question text unless `LOG_QUESTION_TEXT` is on (refused in production). The hosted
-  clients log only model, status, latency and attempt, never the key, the texts or the response bodies.
+- Private uploads follow `PRIVATE_CONTEXT_POLICY`:
+  - `hosted_with_notice` (the default): the hosted model generates the answer, the answer carries a
+    `third_party_processing` Notice, and the upload screen warns first.
+  - `local_only`: any answer whose context contains a private chunk is generated by the local Ollama model, so
+    the answer text never leaves the machine. Quality is lower and the answer is marked degraded. `local_only`
+    requires `LOCAL_FALLBACK_ENABLED=true`, which is checked at start-up.
+- The chunk text of private Documents still goes to the embedding API at upload, even under `local_only`.
+  `EMBEDDING_PROVIDER=local` keeps it on the machine.
+- Logs never contain the question text unless `LOG_QUESTION_TEXT` is on, and production refuses that setting. The
+  hosted clients log only model, status, latency and attempt; never the key, the texts or the response bodies.
 
 **Alternatives rejected.**
 
 | Alternative | Why not |
 |---|---|
-| Claude, GPT or Gemini APIs | Proprietary. The project decision is open-weight models only. |
-| AntSeed peer-to-peer network (used in the first plan) | Sellers come and go, model ids cannot be verified, and sellers can read prompts. |
-| A strong model on the 6 GB laptop GPU | Fits only small quantised models with weak Urdu, and the VRAM is needed elsewhere. |
+| The NVIDIA open-weight profile | Not available to this project's account. Kept as a configuration. |
+| A strong model on the 6 GB laptop GPU | Fits only small quantised models with weak Urdu, and the GPU already runs the reranker. |
+| Claude or Gemini | Would also work, but adds a second vendor and key next to the OpenAI embeddings. |
+| AntSeed peer-to-peer network (the first plan) | Sellers come and go, model ids cannot be verified, and sellers can read prompts. |
 | A single model, no chain | One outage or rate limit would take the service down. |
-| LangChain `ChatOpenAI` for the transport | Less control over retry, rate-limit and per-attempt timeout, harder to test offline. LangGraph and `langchain-core` are still used for the pipeline. |
+| LangChain `ChatOpenAI` for the transport | Less control over retries, the rate limit and per-attempt timeouts, and harder to test offline. LangGraph and `langchain-core` are still used for the pipeline. |
 | Streaming the answer | A fabricated Citation would be shown before the check can remove it. `/ask` returns only checked answers. |
 
 **Trade-offs.**
 
 | | Effect |
 |---|---|
-| Quality | Large open-weight models are good at grounded answering; Urdu and Roman Urdu quality is the open question. The fallback model is much weaker. |
-| Cost | $0 on free credits, but rate-limited (35 requests per minute client-side). |
-| Speed | A large MoE model is slower than a small one. Failover adds the failed attempt's wait to one request, bounded by the 90 s chain cap. |
-| Privacy | Hosted: the provider sees the prompt. Mitigated by public-corpus-only context, a Notice, and `local_only`. |
-| Availability | Chain plus breakers plus optional local model; otherwise a clean 503. |
+| Quality | Good at following strict instructions; Urdu and Roman Urdu quality is the open question. The local fallback is much weaker. |
+| Cost | Paid per token; priced and tracked per question. |
+| Speed | Small models are fast. Failover adds the failed attempt's wait to one request, bounded by the 90 s chain cap. |
+| Privacy | The provider sees prompts and chunk text. Mitigated by public-corpus-only context, a Notice, and `local_only`. |
+| Openness | Proprietary models, against the original preference. The open-weight profile remains a switch. |
+| Availability | The model chain, circuit breakers and an optional local model; otherwise a clean 503. |
 
 **Evidence.**
 
-- [tests/unit/test_llm_router.py](tests/unit/test_llm_router.py) (30 tests: fallback order, breaker open and
-  half-open, 429 with `Retry-After`, JSON mode retry, 401 skip, timeouts, local fallback, rate limit).
+- [tests/unit/test_llm_router.py](tests/unit/test_llm_router.py): fallback order, the breaker opening and
+  half-opening, 429 with `Retry-After`, the JSON mode retry, the 401 skip, timeouts, local fallback and the rate
+  limit.
 - [tests/integration/test_app_end_to_end.py](tests/integration/test_app_end_to_end.py) and
-  [tests/api/test_ask_api.py](tests/api/test_ask_api.py) (the 503 path).
+  [tests/api/test_ask_api.py](tests/api/test_ask_api.py): the 503 path.
+- [tests/unit/test_cost.py](tests/unit/test_cost.py): cost per request.
 - Contamination control: `CB_closed_book` asks the generator the golden questions with no sources.
 - **Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Generator comparison" and "Contamination".**
 
@@ -813,7 +874,7 @@ verifies mechanically.
 | **Dates, contradictions, provinces** | The model must state the document and date for a fee or deadline, present disagreeing sources with agency and date, label the newest as current, label `scope` public as "Official source" and private as "Your upload", and answer per province (federal first) when the question names none and sources differ. |
 | **Not advice** | "Explain what the sources say. Never tell the user what they personally should do in a legal, tax or court matter." A directive-advice pattern check on the answer triggers one regeneration. The Notice and Referral are attached by code. |
 
-**Why.** Open models have no built-in citation feature, and a "please cite your sources" instruction in free text
+**Why.** The chat APIs in use have no built-in citation feature, and a "please cite your sources" instruction in free text
 cannot be checked. Asking for an exact quote turns "is this citation real?" into a string comparison the code can
 do. That is the main defence against invented citations, which the brief names. JSON mode is requested but not
 trusted: the parser finds the first balanced JSON object in the reply, tolerates code fences and trailing
@@ -876,9 +937,9 @@ Versioned REST under `/api/v1`, health at the root. Interactive documentation is
 | POST | `/api/v1/ask` | Full RAG answer with Citations and every retrieved chunk | 200 (a Refusal is also 200) | 400, 401, 404, 422, 429, 503 |
 | POST | `/api/v1/search` | Retrieval only: ranked chunks with every score | 200 | 401, 404, 422, 503 |
 | POST | `/api/v1/feedback` | Thumbs up or down on one of my own answers | 201 | 401, 404, 422 |
-| GET | `/api/v1/metrics/summary` | Latency, tokens, cost and error rates | **501 today** (stub) | 401 |
+| GET | `/api/v1/metrics/summary` | Latency, tokens, cost and error rates | 200 | 401 |
 | GET | `/health/live` | Process is up | 200 | n/a |
-| GET | `/health/ready` | Qdrant and the NVIDIA API reachable | 200 | 503 |
+| GET | `/health/ready` | Qdrant and each hosted API the configuration uses (LLM, embeddings) reachable with the key | 200 | 503 |
 
 Document and question endpoints require `Authorization: Bearer <JWT>`. Health does not.
 
@@ -982,7 +1043,7 @@ and GO-9 are the identifiers used in the code comments and tests.
 | Too long | over `max_question_chars` (2000) | length check after sanitising | 422 `question_too_long` |
 | Invisible and obfuscated text | zero-width, bidi, control characters, variation selectors; text where invisible characters exceed 10% | removed before anything else; the ratio is checked | cleaned, or 400 `obfuscated_input` |
 | Prompt injection | "ignore previous instructions", "reveal your system prompt", and Urdu and Roman Urdu equivalents | YAML pattern lists ([patterns/injection.yaml](app/guardrails/patterns/injection.yaml)), matched on the sanitised text and on decoded variants (base64 payloads, rot13, leetspeak, Cyrillic and Greek look-alike letters) | 400 `prompt_injection_detected` |
-| Jailbreak | role-play and "no rules" prompts | [patterns/jailbreak.yaml](app/guardrails/patterns/jailbreak.yaml), then the NemoGuard jailbreak-detect classifier; a score above 0.9 blocks | 400 `jailbreak_detected` |
+| Jailbreak | role-play and "no rules" prompts | [patterns/jailbreak.yaml](app/guardrails/patterns/jailbreak.yaml), then, if `INJECTION_PROVIDER=nvidia`, the NemoGuard jailbreak-detect classifier (a score above 0.9 blocks). It is off in the OpenAI profile, so the pattern lists and the output checks carry this alone | 400 `jailbreak_detected` |
 | Helper flag | injection the patterns missed | the helper model's `injection_suspect` flag, recorded as a guard flag | flag, not a block |
 | Off-topic | questions unrelated to Pakistani government services | the helper model's `off_topic` flag, defined narrowly ("poems, code, sports scores, general chat") so a borderline legal question is not refused | Refusal `off_topic` |
 | No documents | question before anything is uploaded, or `scope=mine` with no uploads | `corpus_check` | Refusal `no_documents` |
@@ -1094,7 +1155,7 @@ IDF would let other users' uploads shift this user's scores, leaking information
 |---|---|
 | Per-User limits | 50 Documents, 200 MB, 20,000 chunks, 2 concurrent ingestion jobs |
 | Rate limits (slowapi, in process) | `POST /ask` 30/minute and uploads 10/minute, keyed by the JWT user id (else client IP); `POST /auth/login` 5/minute keyed by client IP and the hashed submitted email; signup 5/minute by IP. A limited request gets 429 with `Retry-After` |
-| Production config check | With `APP_ENV=prod` the app refuses to start unless: `JWT_SECRET` is set, is not the default, and is at least 32 characters; `NVIDIA_API_KEY` is set; `CORS_ORIGINS` is non-empty and has no `*`; `LOG_QUESTION_TEXT` is false. It lists every problem and never echoes a secret ([tests/unit/test_config_prod.py](tests/unit/test_config_prod.py)) |
+| Production config check | With `APP_ENV=prod` the app refuses to start unless: `JWT_SECRET` is set, is not the default, and is at least 32 characters; the LLM key is set (`LLM_API_KEY`, or `OPENAI_API_KEY` on an OpenAI base URL), plus `OPENAI_API_KEY` when `EMBEDDING_PROVIDER=openai` and the NVIDIA key when an NVIDIA retrieval provider is selected; `CORS_ORIGINS` is non-empty and has no `*`; `LOG_QUESTION_TEXT` is false. It lists every problem and never echoes a secret ([tests/unit/test_config_prod.py](tests/unit/test_config_prod.py)) |
 | Security headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, and `Strict-Transport-Security` in prod ([tests/api/test_security_headers.py](tests/api/test_security_headers.py)) |
 | Secrets | Only in environment variables or `.env` (gitignored), typed `SecretStr` so they do not appear in reprs or tracebacks; `.env.example` has no values; `gitleaks` runs in CI; log redaction masks keys and CNIC-shaped numbers |
 | CORS | Explicit origin list, credentials allowed, headers exposed: `X-Request-ID`, `Location`, `Retry-After` |
@@ -1131,7 +1192,7 @@ the statuses a real service needs.
 | 422 | Invalid request data | `validation_failed`, `question_empty`, `question_too_long` | Field-level `errors` list |
 | 429 | Rate limit exceeded | `rate_limited`, `too_many_ingest_jobs` | `Retry-After` header |
 | 500 | (not in the brief) | `internal_error`, `tenant_filter_missing` | Generic body; detail in the log only |
-| 501 | (not in the brief) | `not_implemented` | `/metrics/summary` today |
+| 501 | (not in the brief) | `not_implemented` | a service that is not wired (not reachable in a normal start-up) |
 | 503 | LLM, embedding API or vector DB down or timing out | `llm_unavailable`, `dependency_unavailable` | `Retry-After` when the model chain is exhausted |
 
 How dependency failures become a 503:
@@ -1182,10 +1243,10 @@ What exists in the code today, and what does not.
   these with a window selector. Token counts sum the helper call and every generation attempt.
 - **Cost.** [request_cost](app/observability/cost.py) writes `list_price_usd` (tokens times `MODEL_PRICES`, USD
   per 1M tokens, empty by default so no price is invented) and `cost_usd` (the same figure only when
-  `NVIDIA_BILLED=true`; the free tier and the local model are $0). Per-step timings and token counts are also
+  the hosted calls are billed: `LLM_BILLED`, which defaults to true on an OpenAI base URL and false on NVIDIA's free tier; the local model is $0). Per-step timings and token counts are also
   logged on the `ask.done` line with the request id.
 - **Feedback.** `POST /feedback` stores a thumbs up or down against the caller's own request id.
-- **Readiness.** `/health/ready` probes Qdrant and the NVIDIA API with a 2 s timeout each.
+- **Readiness.** `/health/ready` probes Qdrant and each hosted API the configuration uses (`llm_api`, plus `openai_embeddings` or `nvidia_retrieval`), with a 2 s timeout each.
 
 **Does not exist yet (be explicit).**
 
@@ -1193,7 +1254,7 @@ What exists in the code today, and what does not.
 - Langfuse is configured in `config.py` (`LANGFUSE_*`) but no tracing code calls it, and `AskResponse.trace_id`
   is always empty. Tracing per step comes from the per-node timings in the response and the logs, not from a
   tracing tool.
-- List prices are zero until `MODEL_PRICES` is filled from the provider's pricing page.
+- `MODEL_PRICES` must be kept in step with OpenAI's pricing page by hand; a model missing from it counts as $0.
 
 ---
 
@@ -1230,7 +1291,7 @@ Counts are test functions found by searching `def test_` per folder (`tests/test
 no tests). Parametrised cases make the number that pytest runs larger: the full suite before this branch was
 **670 passed, 1 skipped**.
 
-**Fakes instead of the real services.** The default suite never calls the NVIDIA API, downloads a model, or needs
+**Fakes instead of the real services.** The default suite never calls a hosted API (OpenAI or NVIDIA), downloads a model, or needs
 Qdrant or Docker. [tests/fakes.py](tests/fakes.py) has a deterministic hash-based `FakeEmbedder`, an
 `InMemoryVectorStore` (with a contract test, [test_fakes_contract.py](tests/unit/test_fakes_contract.py), that
 keeps it behaving like the real store), a `FakeReranker` and a scriptable `FakeLLM` that can return a forged
@@ -1267,7 +1328,7 @@ tested (only the helpers); the UI was checked by hand and through the demo.
 .\.venv\Scripts\python -m pytest tests\api -k upload    # one area
 .\scripts\dev.ps1 check                                 # ruff + mypy --strict + pytest
 cd frontend; npm test                                   # frontend helper tests
-.\.venv\Scripts\python -m pytest -m live                # needs NVIDIA_API_KEY and Qdrant
+.\.venv\Scripts\python -m pytest -m live                # needs the API keys in .env and Qdrant
 .\.venv\Scripts\python -m evals.run --include-drafts --split all   # the evaluation (EVAL.md)
 ```
 
@@ -1291,7 +1352,9 @@ backups and secret rotation are in [docs/DEPLOY.md](docs/DEPLOY.md).
   so the browser never holds the API token.
 - State is two volumes: `api_data` (SQLite and uploaded files) and `qdrant_storage` (vectors). The vector index
   can be rebuilt by re-ingesting; the database and uploads cannot.
-- No GPU is needed because every model is hosted. This makes a small CPU VM enough.
+- The evaluated profile runs the reranker locally (`RERANKER_PROVIDER=local`), which wants a GPU; on a CPU VM it is
+  slow. For deployment, `RERANKER_PROVIDER=none` (gate on dense similarity) or the NVIDIA reranker avoids the GPU,
+  at the cost of re-tuning the thresholds.
 - Start-up: `APP_ENV=prod`, then the production config check (section 7.3) refuses insecure settings.
   `scripts/check_models.py --probe` confirms the key and that each model id exists, `scripts/create_admin.py`
   creates the admin, and `scripts/seed_corpus.py` ingests the Official corpus idempotently through the normal
@@ -1317,14 +1380,15 @@ Stated plainly, so a reader does not have to find them.
 - **The golden set is incomplete:** 10 draft items (9 answerable, 1 unanswerable, in 3 languages), none yet
   `approved`. The brief requires at least 25 including at least 5 unanswerable questions, and the plan was 59.
   With so few items one question moves a rate by about 10 points.
-- **The `X-Eval-Config` override header is not honoured by the service**, so the dense-only,
-  hybrid-without-rerank and Qwen-generator comparisons cannot yet be run as real measurements. Only the baseline
-  and the closed-book run are valid today. The brief's "compare at least two configurations" therefore depends on
-  adding that support, or on running two builds of the index.
+- **The generator comparison config is out of date:** `evals/configs/G2_qwen3_generator.yaml` names a Qwen model
+  from the NVIDIA profile. For the OpenAI profile it should compare `gpt-4.1-mini` against `gpt-4o-mini`. The
+  retrieval comparisons (`R1`, `R4`, `R5`) are ready.
+- **The judge shares a vendor with the generator** (`gpt-4o` judging `gpt-4.1-mini`), so the kappa check matters
+  more (section 4.7).
 - **No chunk-size or embedding-model comparison** has been set up (section 4.3, 4.4).
 - **Judge reliability** is checked by hand-labelling 30 answers and computing Cohen's kappa; none are labelled
   yet.
-- `tau_keep` and `tau_refuse` need re-tuning for the hosted reranker.
+- `tau_keep` and `tau_refuse` are untuned first guesses (section 4.6).
 
 **Features not built.**
 
@@ -1333,7 +1397,8 @@ Stated plainly, so a reader does not have to find them.
   failure, and delete refuses to finish unless the count is 0, but nothing repairs drift after the fact.
 - **No persistent ingestion queue.** Background jobs live in process memory and are lost on restart (the
   Document ends FAILED and must be re-uploaded).
-- **`/metrics/summary` is a stub, Langfuse is not wired, cost per question is not computed** (section 9).
+- **Langfuse is not wired** (section 9). Metrics and cost per question come from the request log and the `/metrics`
+  dashboard instead.
 - **JPG and PNG uploads are rejected.** The OCR path for images is not enabled.
 - The `semantic` and `fixed` values of `CHUNK_STRATEGY` are declared but not implemented.
 - **Corpus:** the Official corpus is not yet ingested, BISP is excluded, the DOCX and PPTX samples are derived or
@@ -1346,19 +1411,23 @@ Stated plainly, so a reader does not have to find them.
 
 - One API worker (section 11). Rate limits, document locks and ingestion jobs are in process memory.
 - SQLite is fine for one node and not for several. Postgres is the next step.
-- Hosted models bring rate limits (about 40 requests per minute on the free tier) and a privacy trade-off that
-  is stated, not removed.
+- Hosted models bring a per-token bill, provider rate limits and a privacy trade-off that is stated, not removed.
+- **The Qdrant collection name does not record the embedding model.** It is `chunks__bge-m3__v1` even when it holds
+  OpenAI vectors, so nothing stops vectors from two embedders being mixed after a provider switch. Today the
+  defence is the manual re-index step. The fix is to name the collection after the provider, model and
+  dimension, and refuse to start when they do not match.
 
 **Quality risks.**
 
 - Urdu and Roman Urdu answer quality is unmeasured, and the fallback model is weak.
 - OCR of Urdu has character errors, and OCR text has no table structure.
-- The hosted sparse encoder is a plain keyword vector, not BGE-M3's learned sparse output.
+- The sparse encoder is a plain keyword vector, not BGE-M3's learned sparse output.
+- The OpenAI profile has no jailbreak classifier, only pattern lists and the output checks.
 - The input guardrail thresholds are not yet tuned against a set of benign questions, so the false-block rate is
   unknown.
 
 **Future work, in order of value.** (1) Approve and extend the golden set to 25 or more, run the evaluation,
-add the `X-Eval-Config` support and fill EVAL.md. (2) Build the reconciler. (3) Build `/metrics/summary` and the
-metrics page, and wire Langfuse. (4) Re-tune the thresholds on the dev split. (5) A persistent job queue and
+update the generator comparison for the OpenAI models and fill EVAL.md. (2) Build the reconciler. (3) Wire
+Langfuse and name the Qdrant collection after its embedding model. (4) Re-tune the thresholds on the dev split. (5) A persistent job queue and
 Postgres, so the API can scale past one worker. (6) Image OCR for uploads. (7) docling for table-heavy PDFs if
 the table questions fail.
