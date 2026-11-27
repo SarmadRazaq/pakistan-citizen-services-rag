@@ -5,8 +5,8 @@
 
 Runs from the repo root with the interpreter that runs this script (the "python3" kernel is that
 interpreter), so `import app` works. With an LLM key set (OPENAI_API_KEY or LLM_API_KEY, environment or .env)
-notebooks 03 and 04 use the hosted models; set RAG_NOTEBOOKS_OFFLINE=1 to force the offline fakes. Exits non-zero if any
-cell fails.
+notebooks 03 and 04 use the hosted models; set RAG_NOTEBOOKS_OFFLINE=1 to force the offline fakes.
+Exits non-zero if any cell fails.
 """
 
 from __future__ import annotations
