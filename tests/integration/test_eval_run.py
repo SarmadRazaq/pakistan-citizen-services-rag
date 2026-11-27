@@ -1,4 +1,4 @@
-"""`python -m evals.run` end to end against a fake service (ASGITransport) and a fake NVIDIA API
+"""`python -m evals.run` end to end against a fake service (ASGITransport) and a fake LLM API
 (MockTransport), then an `--offline` re-run from the caches with no transport at all."""
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from app.config import Settings
 
 REPO = Path(__file__).resolve().parents[2]
 POLICY = "ID-05__nadra-registration-policy-6-0-2-en.pdf"
-JUDGE_MODEL = "openai/gpt-oss-120b"
+JUDGE_MODEL = "gpt-4o"
 
 
 def _item(id_: str, question: str, **over: Any) -> dict[str, Any]:
@@ -211,7 +211,7 @@ def fake_service(*, honour_header: bool, calls: list[dict[str, Any]]) -> FastAPI
                 "threshold": 0.3,
                 "chunks": chunks,
             },
-            "provider": {"endpoint": "nvidia", "model": "deepseek-ai/deepseek-v3.1", "attempts": 1},
+            "provider": {"endpoint": "hosted", "model": "gpt-4.1-mini", "attempts": 1},
             "usage": {"input_tokens": 3000, "output_tokens": 120},
             "latency_ms": {"total": 1000 if body["question"].isascii() else 3000},
         }
@@ -221,7 +221,7 @@ def fake_service(*, honour_header: bool, calls: list[dict[str, Any]]) -> FastAPI
     return app
 
 
-class FakeNvidia:
+class FakeLlm:
     """Judge verdicts and closed-book answers, keyed on what the prompt contains."""
 
     def __init__(self) -> None:
@@ -297,12 +297,12 @@ def _rows(path: Path) -> dict[tuple[str, str], dict[str, str]]:
 
 async def test_end_to_end_then_offline_rerun(tmp_path: Path, golden: Path) -> None:
     calls: list[dict[str, Any]] = []
-    nvidia = FakeNvidia()
+    llm = FakeLlm()
     out = await run_eval(
         _opts(tmp_path, golden),
-        settings=_settings(nvidia_api_key="nvapi-test"),
+        settings=_settings(llm_api_key="sk-test"),
         service_transport=httpx.ASGITransport(app=fake_service(honour_header=True, calls=calls)),
-        llm_transport=httpx.MockTransport(nvidia),
+        llm_transport=httpx.MockTransport(llm),
         limiter=_fast(),
     )
     for name in ("metrics.json", "per_question.csv", "answers.jsonl", "report.md"):
@@ -339,7 +339,7 @@ async def test_end_to_end_then_offline_rerun(tmp_path: Path, golden: Path) -> No
     assert base["failures"] == {"advice_boundary": 1, "ok": 3, "retrieval_miss": 1}
 
     cb = configs["CB_closed_book"]
-    assert cb["meta"]["kind"] == "closed_book" and cb["meta"]["model"] == "deepseek-ai/deepseek-v3.1"
+    assert cb["meta"]["kind"] == "closed_book" and cb["meta"]["model"] == "gpt-4.1-mini"
     assert cb["overall"]["n"] == 4  # answerable items only
     assert cb["overall"]["judge_correctness_mean"] == pytest.approx((1 + 0 + 1 + 0) / 4)
 
@@ -359,11 +359,11 @@ async def test_end_to_end_then_offline_rerun(tmp_path: Path, golden: Path) -> No
     eval_md = (tmp_path / "EVAL.md").read_text(encoding="utf-8")
     assert "R1_dense_only" in eval_md and "_Not run yet._" not in eval_md
 
-    judge_calls = sum(m == JUDGE_MODEL for m in nvidia.calls)
+    judge_calls = sum(m == JUDGE_MODEL for m in llm.calls)
     # R4 (5) + CB (4); R1's answers equal R4's here, so its identical judge prompts hit the disk cache
     assert judge_calls == 4 + 5
 
-    # ---- offline: no service, no NVIDIA transport, no key; identical numbers from the caches
+    # ---- offline: no service, no LLM transport, no key; identical numbers from the caches
     offline = await run_eval(
         _opts(tmp_path, golden, offline=True, run_name="offline", email=None, password=None),
         settings=_settings(),

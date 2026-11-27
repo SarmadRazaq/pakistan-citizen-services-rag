@@ -2,7 +2,8 @@
 # Start everything (API + web):  docker compose --profile api up -d --build
 #
 # Everything is bound to 127.0.0.1; a reverse proxy on the host terminates TLS in front (docs/DEPLOY.md).
-# All models are hosted (NVIDIA API); only Tesseract OCR runs locally. The API runs ONE process per
+# Chat and embeddings are hosted (OpenAI API); only Tesseract OCR runs locally, and the image has no GPU
+# reranker, so RERANKER_PROVIDER defaults to none here. The API runs ONE process per
 # container: in-process document locks, ingestion jobs and rate limits assume it.
 
 services:
@@ -32,6 +33,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       DATABASE_URL: sqlite+aiosqlite:////data/app.sqlite3
       STORAGE_DIR: /data/storage
+      RERANKER_PROVIDER: ${RERANKER_PROVIDER:-none}  # no torch / GPU in this image
     volumes:
       - api_data:/data
     ports:

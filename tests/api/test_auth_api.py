@@ -347,7 +347,7 @@ def test_prod_refuses_the_default_jwt_secret() -> None:
     with pytest.raises(RuntimeError, match="JWT_SECRET"):
         # model_construct skips Settings' own prod validation, so this exercises AuthService's guard.
         AuthService(Settings.model_construct(app_env="prod"), db)
-    AuthService(auth_settings(app_env="prod", nvidia_api_key="nvapi-test"), db)  # a real secret is fine
+    AuthService(auth_settings(app_env="prod", llm_api_key="sk-test"), db)  # a real secret is fine
 
 
 # ---------------------------------------------------------------- account deletion (E41)

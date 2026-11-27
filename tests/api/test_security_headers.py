@@ -29,7 +29,7 @@ async def test_hsts_only_in_prod() -> None:
         _env_file=None,
         app_env="prod",
         jwt_secret="x" * 48,
-        nvidia_api_key="nvapi-test",
+        llm_api_key="sk-test",
         log_level="WARNING",
     )
     app = create_app(settings)

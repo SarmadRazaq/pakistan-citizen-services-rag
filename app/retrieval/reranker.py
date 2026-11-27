@@ -39,7 +39,7 @@ class CrossEncoderModel(Protocol):
 
 def default_reranker_factory(settings: Settings) -> Callable[[], CrossEncoderModel]:
     def load() -> CrossEncoderModel:
-        from FlagEmbedding import FlagReranker  # type: ignore[import-not-found, unused-ignore]
+        from FlagEmbedding import FlagReranker  # type: ignore[import-not-found, import-untyped, unused-ignore]
 
         device = resolve_device(settings.device)
         use_fp16 = settings.gpu_fp16 and device.startswith("cuda")

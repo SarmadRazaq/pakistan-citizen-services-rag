@@ -12,6 +12,23 @@ from app.core.health import HealthService, Probe
 from app.core.tenancy import Role, Scope, TenantContext
 from app.main import create_app
 
+_PROVIDER_ENV = (
+    "LLM_BASE_URL",
+    "LLM_API_KEY",
+    "LLM_BILLED",
+    "LLM_TOKEN_PARAM",
+    "OPENAI_API_KEY",
+    "EMBEDDING_PROVIDER",
+    "RERANKER_PROVIDER",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's exported OPENAI_API_KEY / LLM_* variables must not leak into tests."""
+    for name in _PROVIDER_ENV:
+        monkeypatch.delenv(name, raising=False)
+
 
 @pytest.fixture
 def settings() -> Settings:

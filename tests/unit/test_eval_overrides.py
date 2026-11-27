@@ -9,7 +9,7 @@ import pytest
 from app.core.errors import AppError, ErrorCode
 from app.core.eval_overrides import EvalOverrides, parse_eval_header
 
-MODELS = ("deepseek-ai/deepseek-v3.1", "qwen/qwen3-235b-a22b")
+MODELS = ("gpt-4.1-mini", "gpt-4o-mini")
 
 
 def test_defaults() -> None:
@@ -27,7 +27,7 @@ def test_full_header_normalised_sorted_compact() -> None:
     assert o.config == "R1" and o.retrieval_mode == "dense" and not o.rerank
     assert o.generation_model == MODELS[1]
     assert o.applied_json() == (
-        '{"config":"R1","generation_model":"qwen/qwen3-235b-a22b","rerank":false,"retrieval_mode":"dense"}'
+        '{"config":"R1","generation_model":"gpt-4o-mini","rerank":false,"retrieval_mode":"dense"}'
     )
 
 

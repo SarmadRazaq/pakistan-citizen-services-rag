@@ -5,8 +5,8 @@ RAGAS is **optional**: it pulls a heavy dependency tree (datasets, pyarrow, pand
 reports itself unavailable and `python -m evals.run --ragas` skips it with a message; the project's
 own deterministic metrics and the rubric judge do not depend on it.
 
-It is configured with the same open-weight judge (`settings.judge_model`) through LangChain's
-`ChatOpenAI(base_url=NVIDIA)`, as the blueprint specifies. Its calls are **not** in the eval disk cache
+It is configured with the same judge (`settings.judge_model`) through LangChain's
+`ChatOpenAI(base_url=LLM_BASE_URL)`, as the blueprint specifies. Its calls are **not** in the eval disk cache
 and do not go through the harness's rate limiter, so run it on the baseline only, once the numbers
 from the rest of the harness are final.
 """
@@ -55,7 +55,7 @@ def _evaluate(
         return {"n": 0}
     key = settings.llm_key or None
     llm = LangchainLLMWrapper(
-        ChatOpenAI(model=settings.judge_model, base_url=settings.nvidia_base_url, api_key=key, temperature=0)
+        ChatOpenAI(model=settings.judge_model, base_url=settings.llm_base_url, api_key=key, temperature=0)
     )
     result = evaluate(
         dataset=EvaluationDataset(samples=samples),

@@ -1,4 +1,4 @@
-"""OpenAI / neutral-LLM setup: env aliases, OpenAI embedder, factory, validation, chat body,
+"""OpenAI / neutral-LLM setup: env names, OpenAI embedder, factory, validation, chat body,
 health probes, cost and the check_models script. httpx.MockTransport only; no network."""
 
 from __future__ import annotations
@@ -17,26 +17,21 @@ from app.config import Settings
 from app.core.errors import AppError
 from app.core.health import default_probes
 from app.generation.llm import LLMRouter
-from app.guardrails.input_guards import build_injection_classifier
 from app.observability.cost import ModelUsage, request_cost
 from app.protocols import LLMMessage
 from app.retrieval.factory import build_retrieval
-from app.retrieval.hosted import NvidiaEmbedder, OpenAIEmbedder
+from app.retrieval.hosted import LexicalSparseEncoder, OpenAIEmbedder
 from app.retrieval.reranker import NoReranker
 
 OPENAI_KEY = "sk-test-openai-0123456789abcdefghijkl"
-NVIDIA_KEY = "nvapi-test-key-0123456789abcdefghij"
+OTHER_BASE = "https://llm.example.test/v1"
 OPENAI_BASE = "https://api.openai.com/v1"
 DIM = 4
 ENV_NAMES = (
     "LLM_BASE_URL",
     "LLM_API_KEY",
-    "NVIDIA_BASE_URL",
-    "NVIDIA_API_KEY",
-    "NVIDIA_RETRIEVAL_API_KEY",
     "OPENAI_API_KEY",
     "LLM_BILLED",
-    "NVIDIA_BILLED",
     "LLM_TOKEN_PARAM",
     "EMBEDDING_PROVIDER",
     "RERANKER_PROVIDER",
@@ -57,11 +52,10 @@ def make_settings(**overrides: Any) -> Settings:
 
 def openai_settings(**overrides: Any) -> Settings:
     base: dict[str, Any] = dict(
-        nvidia_base_url=OPENAI_BASE,
-        nvidia_api_key=OPENAI_KEY,
+        llm_base_url=OPENAI_BASE,
+        llm_api_key=OPENAI_KEY,
         embedding_provider="openai",
         reranker_provider="none",
-        injection_provider="none",
     )
     base.update(overrides)
     return make_settings(**base)
@@ -71,45 +65,45 @@ def openai_settings(**overrides: Any) -> Settings:
 
 
 def test_llm_env_names_are_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_BASE_URL", OPENAI_BASE)
+    monkeypatch.setenv("LLM_BASE_URL", OTHER_BASE)
     monkeypatch.setenv("LLM_API_KEY", OPENAI_KEY)
     s = make_settings()
-    assert s.nvidia_base_url == OPENAI_BASE
-    assert s.nvidia_api_key is not None and s.nvidia_api_key.get_secret_value() == OPENAI_KEY
-    assert s.llm_is_openai and s.llm_key == OPENAI_KEY
+    assert s.llm_base_url == OTHER_BASE
+    assert s.llm_api_key is not None and s.llm_api_key.get_secret_value() == OPENAI_KEY
+    assert not s.llm_is_openai and s.llm_key == OPENAI_KEY
 
 
-def test_old_nvidia_env_names_still_work(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NVIDIA_BASE_URL", "https://example.test/v1")
-    monkeypatch.setenv("NVIDIA_API_KEY", NVIDIA_KEY)
+def test_llm_defaults_to_the_openai_api() -> None:
     s = make_settings()
-    assert s.nvidia_base_url == "https://example.test/v1"
-    assert s.llm_key == NVIDIA_KEY
-
-
-def test_llm_names_win_over_old_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_API_KEY", OPENAI_KEY)
-    monkeypatch.setenv("NVIDIA_API_KEY", NVIDIA_KEY)
-    s = make_settings()
-    assert s.llm_key == OPENAI_KEY
-    assert s.nvidia_key == NVIDIA_KEY  # the NVIDIA retrieval key still reads NVIDIA_API_KEY
+    assert s.llm_base_url == OPENAI_BASE and s.llm_is_openai
 
 
 def test_field_names_still_work_as_init_arguments() -> None:
-    s = make_settings(nvidia_api_key=NVIDIA_KEY, nvidia_base_url="https://integrate.api.nvidia.com/v1")
-    assert s.llm_key == NVIDIA_KEY and s.nvidia_key == NVIDIA_KEY and s.llm_is_nvidia
+    s = make_settings(llm_api_key=OPENAI_KEY, llm_base_url=OTHER_BASE)
+    assert s.llm_key == OPENAI_KEY and s.llm_base_url == OTHER_BASE
 
 
 def test_openai_key_alone_serves_llm_and_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
-    s = make_settings(nvidia_base_url=OPENAI_BASE)
+    s = make_settings()
     assert s.llm_key == OPENAI_KEY and s.openai_key == OPENAI_KEY
 
 
-def test_openai_key_is_never_reused_for_nvidia() -> None:
-    s = openai_settings(embedding_provider="nvidia", reranker_provider="nvidia", injection_provider="nvidia")
-    assert s.nvidia_key == ""
-    assert build_injection_classifier(s) is None  # no NVIDIA key: the OpenAI key is not sent to NVIDIA
+def test_llm_api_key_wins_over_openai_key_for_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "sk-chat-only")
+    monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
+    s = make_settings()
+    assert s.llm_key == "sk-chat-only" and s.openai_key == OPENAI_KEY
+
+
+def test_openai_key_is_never_reused_for_another_llm_host() -> None:
+    s = make_settings(llm_base_url=OTHER_BASE, openai_api_key=OPENAI_KEY)
+    assert s.llm_key == ""  # the OpenAI key is not sent to a non-OpenAI chat endpoint
+
+
+def test_llm_key_is_not_reused_for_embeddings_on_another_llm_host() -> None:
+    s = make_settings(llm_base_url=OTHER_BASE, llm_api_key="sk-other-host")
+    assert s.openai_key == ""
 
 
 def test_openai_defaults() -> None:
@@ -166,11 +160,10 @@ async def test_openai_embedder_request_shape() -> None:
     assert out[0].sparse.indices  # lexical sparse half
 
 
-async def test_openai_embedder_uses_same_sparse_as_nvidia() -> None:
+async def test_openai_embedder_sparse_half_is_the_lexical_encoder() -> None:
     text = "passport fee Rs 4,500"
     openai = await OpenAIEmbedder(openai_settings(), client=Recorder().client()).embed_query(text)
-    nv = NvidiaEmbedder(make_settings(nvidia_api_key=NVIDIA_KEY), client=Recorder().client())
-    assert openai.sparse == (await nv.embed_query(text)).sparse
+    assert openai.sparse == LexicalSparseEncoder().encode_query(text)
 
 
 async def test_openai_embedder_batches_and_orders() -> None:
@@ -191,7 +184,7 @@ async def test_openai_embedder_batch_never_exceeds_openai_input_limit() -> None:
     assert emb._batch_size == 2048
 
 
-async def test_openai_embedder_key_falls_back_to_openai_llm_key() -> None:
+async def test_openai_embedder_key_falls_back_to_the_llm_key_on_the_openai_base() -> None:
     rec = Recorder()
     await OpenAIEmbedder(openai_settings(), client=rec.client()).embed_query("x")
     assert rec.calls[0][0].headers["authorization"] == f"Bearer {OPENAI_KEY}"
@@ -206,7 +199,7 @@ async def test_openai_embedder_prefers_its_own_key() -> None:
 
 async def test_openai_embedder_missing_key_is_a_dependency_error_without_network() -> None:
     rec = Recorder()
-    s = make_settings(embedding_provider="openai")  # LLM base is NVIDIA, no OpenAI key
+    s = make_settings(embedding_provider="openai")  # no OPENAI_API_KEY, no LLM key
     with pytest.raises(AppError) as exc:
         await OpenAIEmbedder(s, client=rec.client()).embed_query("x")
     assert "OPENAI_API_KEY" in str(exc.value) and rec.calls == []
@@ -260,11 +253,13 @@ async def test_no_reranker_refuses_to_be_called() -> None:
         await NoReranker().rerank("q", ["p"])
 
 
-def test_invalid_new_provider_values_rejected() -> None:
+def test_invalid_provider_values_rejected() -> None:
     with pytest.raises(ValueError):
         make_settings(embedding_provider="cohere")
     with pytest.raises(ValueError):
         make_settings(reranker_provider="openai")
+    with pytest.raises(ValueError):
+        make_settings(embedding_provider="bogus")
     with pytest.raises(ValueError):
         make_settings(llm_token_param="max_output_tokens")
 
@@ -277,51 +272,42 @@ GOOD_PROD: dict[str, Any] = {
     "cors_origins": ["https://app.example.org"],
     "log_question_text": False,
 }
-NO_NVIDIA: dict[str, Any] = {"reranker_provider": "none", "injection_provider": "none"}
+LOCAL_RETRIEVAL: dict[str, Any] = {"embedding_provider": "local", "reranker_provider": "none"}
 
 
 def prod(**overrides: Any) -> Settings:
     return make_settings(app_env="prod", **{**GOOD_PROD, **overrides})
 
 
-def test_prod_openai_setup_needs_no_nvidia_key() -> None:
-    s = prod(nvidia_base_url=OPENAI_BASE, nvidia_api_key=OPENAI_KEY, embedding_provider="openai", **NO_NVIDIA)
-    assert s.nvidia_key == ""
+def test_prod_one_openai_key_serves_chat_and_embeddings() -> None:
+    s = prod(llm_api_key=OPENAI_KEY)
+    assert s.llm_key == OPENAI_KEY and s.openai_key == OPENAI_KEY
 
 
 def test_prod_openai_key_alone_is_enough_on_openai_base() -> None:
-    s = prod(nvidia_base_url=OPENAI_BASE, openai_api_key=OPENAI_KEY, embedding_provider="openai", **NO_NVIDIA)
+    s = prod(openai_api_key=OPENAI_KEY)
     assert s.llm_key == OPENAI_KEY
 
 
 def test_prod_llm_key_always_required() -> None:
     with pytest.raises(ValueError, match="LLM_API_KEY"):
-        prod(embedding_provider="openai", openai_api_key=OPENAI_KEY, **NO_NVIDIA)
+        prod(**LOCAL_RETRIEVAL)
 
 
 def test_prod_openai_embeddings_need_an_openai_key() -> None:
     with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        prod(nvidia_api_key=NVIDIA_KEY, embedding_provider="openai", **NO_NVIDIA)  # NVIDIA LLM
+        prod(llm_base_url=OTHER_BASE, llm_api_key="sk-other-host")  # key is not an OpenAI key here
 
 
-def test_prod_nvidia_retrieval_needs_an_nvidia_key_when_llm_is_openai() -> None:
-    common: dict[str, Any] = dict(
-        nvidia_base_url=OPENAI_BASE,
-        nvidia_api_key=OPENAI_KEY,
-        embedding_provider="openai",
-        reranker_provider="nvidia",
-        injection_provider="none",
-    )
-    with pytest.raises(ValueError, match="NVIDIA_API_KEY"):
-        prod(**common)
-    ok = prod(nvidia_retrieval_api_key=NVIDIA_KEY, **common)
-    assert ok.nvidia_key == NVIDIA_KEY
+def test_prod_local_embeddings_need_no_openai_key() -> None:
+    s = prod(llm_base_url=OTHER_BASE, llm_api_key="sk-other-host", **LOCAL_RETRIEVAL)
+    assert s.openai_key == ""
 
 
 def test_prod_error_does_not_echo_keys() -> None:
     with pytest.raises(ValueError) as exc:
-        prod(nvidia_base_url=OPENAI_BASE, nvidia_api_key=OPENAI_KEY, embedding_provider="nvidia")
-    assert "NVIDIA_API_KEY" in str(exc.value)
+        prod(llm_base_url=OTHER_BASE, llm_api_key=OPENAI_KEY)
+    assert "OPENAI_API_KEY" in str(exc.value)
     assert OPENAI_KEY not in str(exc.value)
 
 
@@ -376,7 +362,6 @@ async def test_router_reasoning_body_uses_max_completion_tokens_and_no_temperatu
 
 async def test_router_uses_openai_key_when_only_openai_key_is_set() -> None:
     s = make_settings(
-        nvidia_base_url=OPENAI_BASE,
         openai_api_key=OPENAI_KEY,
         generation_models=["gpt-4.1-mini"],
         llm_max_rpm=6000,
@@ -428,32 +413,24 @@ async def test_eval_client_honours_llm_max_rpm_above_35(tmp_path: Path) -> None:
 PRICES = {"gpt-4.1-mini": (0.4, 1.6)}
 
 
-def test_openai_base_url_counts_as_real_cost() -> None:
+def test_hosted_calls_are_billed_by_default() -> None:
     cost, listed = request_cost(
-        openai_settings(model_prices=PRICES), [ModelUsage("gpt-4.1-mini", "nvidia", 1_000_000, 1_000_000)]
+        make_settings(model_prices=PRICES), [ModelUsage("gpt-4.1-mini", "hosted", 1_000_000, 1_000_000)]
     )
     assert cost == pytest.approx(2.0) == listed
 
 
-def test_nvidia_base_url_stays_free_by_default() -> None:
-    cost, listed = request_cost(
-        make_settings(model_prices=PRICES), [ModelUsage("gpt-4.1-mini", "nvidia", 1_000_000, 0)]
-    )
-    assert cost == 0.0 and listed == pytest.approx(0.4)
-
-
-def test_llm_billed_overrides_the_base_url_guess() -> None:
-    usage = [ModelUsage("gpt-4.1-mini", "nvidia", 1_000_000, 0)]
-    free, _ = request_cost(openai_settings(model_prices=PRICES, llm_billed=False), usage)
+def test_llm_billed_false_makes_hosted_calls_free_but_keeps_list_price() -> None:
+    usage = [ModelUsage("gpt-4.1-mini", "hosted", 1_000_000, 0)]
+    free, listed = request_cost(make_settings(model_prices=PRICES, llm_billed=False), usage)
     paid, _ = request_cost(make_settings(model_prices=PRICES, llm_billed=True), usage)
-    assert free == 0.0 and paid == pytest.approx(0.4)
+    assert free == 0.0 and listed == pytest.approx(0.4) and paid == pytest.approx(0.4)
 
 
-def test_old_nvidia_billed_env_name_still_works(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NVIDIA_BILLED", "true")
+def test_llm_billed_env_name(monkeypatch: pytest.MonkeyPatch) -> None:
     assert make_settings().hosted_billed is True
     monkeypatch.setenv("LLM_BILLED", "false")
-    assert make_settings(nvidia_base_url=OPENAI_BASE).hosted_billed is False
+    assert make_settings().hosted_billed is False
 
 
 def test_local_fallback_is_free_even_on_openai() -> None:
@@ -489,23 +466,26 @@ async def test_probes_for_the_openai_setup() -> None:
 async def test_probe_without_key_fails_without_network() -> None:
     seen: list[httpx.Request] = []
     async with probe_client(seen) as client:
-        s = make_settings(nvidia_base_url=OPENAI_BASE)
+        s = make_settings()
         probes = {p.name: p for p in default_probes(s, client)}
         ok, detail = await probes["llm_api"].check()
     assert not ok and detail == "LLM_API_KEY is not set" and seen == []
 
 
-async def test_nvidia_defaults_keep_the_single_llm_probe() -> None:
+async def test_local_embeddings_need_no_openai_probe() -> None:
+    s = openai_settings(embedding_provider="local")
     async with httpx.AsyncClient() as client:
-        names = [p.name for p in default_probes(make_settings(nvidia_api_key=NVIDIA_KEY), client)]
+        names = [p.name for p in default_probes(s, client)]
     assert names == ["qdrant", "llm_api", "ollama"]
 
 
-async def test_nvidia_retrieval_probe_added_when_llm_is_openai() -> None:
-    s = openai_settings(reranker_provider="nvidia", nvidia_retrieval_api_key=NVIDIA_KEY)
-    async with httpx.AsyncClient() as client:
-        names = [p.name for p in default_probes(s, client)]
-    assert "nvidia_retrieval" in names
+async def test_llm_probe_uses_the_configured_base_url() -> None:
+    seen: list[httpx.Request] = []
+    async with probe_client(seen) as client:
+        s = make_settings(llm_base_url=OTHER_BASE, llm_api_key="sk-other-host", embedding_provider="local")
+        probes = {p.name: p for p in default_probes(s, client)}
+        ok, _ = await probes["llm_api"].check()
+    assert ok and [str(r.url) for r in seen] == [f"{OTHER_BASE}/models"]
 
 
 # ---------------------------------------------------------------- scripts/check_models.py
@@ -532,18 +512,17 @@ def run_check(settings: Settings) -> tuple[dict[str, Any], dict[str, str], list[
         return httpx.Response(200, json={"rankings": []})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        out, skipped = module.check_retrieval(client, settings, [])
+        out, skipped = module.check_retrieval(client, settings)
     return out, skipped, seen
 
 
-def test_check_models_probes_only_openai_embeddings_in_the_openai_setup() -> None:
+def test_check_models_probes_only_openai_embeddings_when_there_is_no_reranker() -> None:
     out, skipped, seen = run_check(openai_settings())
     assert list(out) == ["text-embedding-3-large"] and out["text-embedding-3-large"]["reachable"] is True
     assert [str(r.url) for r in seen] == [f"{OPENAI_BASE}/embeddings"]
     assert json.loads(seen[0].content)["dimensions"] == DIM
     assert seen[0].headers["authorization"] == f"Bearer {OPENAI_KEY}"
-    assert set(skipped) == {"reranker", "injection"}
-    assert "none" in skipped["reranker"] and "none" in skipped["injection"]
+    assert set(skipped) == {"reranker"} and "none" in skipped["reranker"]
 
 
 def test_check_models_flags_wrong_embedding_dimension() -> None:
@@ -553,29 +532,36 @@ def test_check_models_flags_wrong_embedding_dimension() -> None:
         return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.0] * (DIM + 1)}]})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        out, _ = module.check_retrieval(client, openai_settings(), [])
+        out, _ = module.check_retrieval(client, openai_settings())
     assert out["text-embedding-3-large"]["reachable"] is False
 
 
-def test_check_models_nvidia_defaults_probe_embedder_and_reranker() -> None:
-    out, skipped, seen = run_check(make_settings(nvidia_api_key=NVIDIA_KEY))
+def test_check_models_defaults_probe_openai_embeddings_and_report_the_local_reranker() -> None:
+    out, skipped, seen = run_check(make_settings(llm_api_key=OPENAI_KEY))
     assert {e["role"] for e in out.values()} == {"embedding", "reranker"}
-    assert all(r.headers["authorization"] == f"Bearer {NVIDIA_KEY}" for r in seen)
-    assert set(skipped) == {"injection"}
+    reranker = out["BAAI/bge-reranker-v2-m3"]
+    assert isinstance(reranker["package_installed"], bool) and isinstance(reranker["weights_cached"], bool)
+    assert [str(r.url) for r in seen] == [f"{OPENAI_BASE}/embeddings"]  # the reranker is not called
+    assert skipped == {}
 
 
-def test_check_models_local_providers_are_skipped() -> None:
-    out, skipped, seen = run_check(
-        make_settings(embedding_provider="local", reranker_provider="local", injection_provider="none")
-    )
-    assert out == {} and seen == [] and set(skipped) == {"embedding", "reranker", "injection"}
+def test_check_models_local_embeddings_are_skipped() -> None:
+    out, skipped, seen = run_check(make_settings(embedding_provider="local", reranker_provider="none"))
+    assert out == {} and seen == [] and set(skipped) == {"embedding", "reranker"}
 
 
-def test_check_models_never_sends_openai_key_to_nvidia() -> None:
-    s = openai_settings(embedding_provider="nvidia", reranker_provider="nvidia")
-    out, skipped, seen = run_check(s)
+def test_check_models_embeddings_without_a_key_are_skipped() -> None:
+    out, skipped, seen = run_check(make_settings(reranker_provider="none"))
     assert out == {} and seen == []
-    assert "no NVIDIA key" in skipped["embedding"] and "no NVIDIA key" in skipped["reranker"]
+    assert "OPENAI_API_KEY" in skipped["embedding"]
+
+
+def test_check_models_local_reranker_reports_missing_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_check_models()
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)
+    skipped: dict[str, str] = {}
+    info = module.check_local_reranker(make_settings(), skipped)
+    assert info is not None and info["package_installed"] is False and skipped == {}
 
 
 def test_check_models_probe_body_for_reasoning_models() -> None:

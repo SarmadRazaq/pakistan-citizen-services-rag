@@ -6,6 +6,8 @@
 >
 > This document is the single source of truth for the build. It also seeds the required `DESIGN.md` and `EVAL.md`, which get their final numbers only after the evaluation has run. **Every number here is a target or a hypothesis until the evaluation measures it.**
 > Part 15 is the multi-agent build plan. It is laid out so each work package can go to one agent on its own branch.
+>
+> Rev 6 (27 Nov): the NVIDIA provider was removed; the current model setup is in DESIGN.md §4.7.
 
 ### Decisions confirmed by the student (22 Nov)
 

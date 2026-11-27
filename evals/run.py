@@ -12,7 +12,7 @@ Outputs go to evals/results/<timestamp>/:
 and the generated tables in EVAL.md are refreshed.
 
 Every service response and LLM call is cached on disk (evals/.cache/{api,judge,closed_book}/), so
-`--offline` re-runs everything from the caches without the service or the NVIDIA API.
+`--offline` re-runs everything from the caches without the service or the LLM API.
 
 Examples
     python -m evals.run --include-drafts --split all              # today: the 10 draft items

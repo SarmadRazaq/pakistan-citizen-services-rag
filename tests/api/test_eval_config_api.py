@@ -22,7 +22,7 @@ from tests.test_ask_support import (
 )
 
 QUOTE = "Urgent passport fee for 36 pages is Rs 9,000"
-MODEL = "qwen/qwen3-235b-a22b"
+MODEL = "gpt-4o-mini"
 HEADER = "X-Eval-Config"
 APPLIED = "X-Eval-Config-Applied"
 ASK = {"question": "What is the urgent passport fee?"}
@@ -50,7 +50,7 @@ def build(make_app: Callable[..., FastAPI], world: World, settings: Settings) ->
         app.state.settings = settings.model_copy(
             update={
                 "eval_overrides_enabled": enabled,
-                "generation_models": ["deepseek-ai/deepseek-v3.1", MODEL],
+                "generation_models": ["gpt-4.1-mini", MODEL],
             }
         )
         return app

@@ -197,7 +197,7 @@ def _fake_torch(available: bool) -> Any:
     cuda = SimpleNamespace(
         is_available=lambda: available,
         mem_get_info=lambda i: (3 * 1024**3, 6 * 1024**3),
-        get_device_name=lambda i: "NVIDIA GeForce RTX 3050",
+        get_device_name=lambda i: "GeForce RTX 3050",
         max_memory_allocated=lambda: 512 * 1024**2,
         empty_cache=lambda: None,
     )
@@ -217,7 +217,7 @@ def test_device_selection(monkeypatch: pytest.MonkeyPatch) -> None:
     assert device_mod.resolve_device("auto") == "cuda:0"
     info = device_mod.device_info("auto")
     assert info.is_cuda and info.vram_total_mb == 6144 and info.vram_free_mb == 3072
-    assert info.name == "NVIDIA GeForce RTX 3050"
+    assert info.name == "GeForce RTX 3050"
     assert device_mod.max_memory_allocated_mb() == 512
 
     monkeypatch.setattr(device_mod, "_import_torch", lambda: _fake_torch(False))

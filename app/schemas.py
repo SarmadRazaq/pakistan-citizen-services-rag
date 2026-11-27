@@ -314,7 +314,7 @@ class GuardrailInfo(Base):
 
 
 class ProviderInfo(Base):
-    endpoint: Literal["nvidia", "ollama", "none"]
+    endpoint: Literal["hosted", "ollama", "none"]
     model: str | None = None
     seller: str | None = None
     attempts: int = 0

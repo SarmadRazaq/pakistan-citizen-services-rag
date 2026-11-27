@@ -17,7 +17,6 @@ from app import __version__
 from app.config import Settings
 from app.schemas import ComponentHealth, HealthResponse
 
-NVIDIA_CATALOG_URL = "https://integrate.api.nvidia.com/v1"
 ProbeFn = Callable[[], Awaitable[tuple[bool, str | None]]]
 
 
@@ -103,8 +102,8 @@ def default_probes(settings: Settings, client: httpx.AsyncClient) -> list[Probe]
     probes = [
         Probe("qdrant", _http_probe(client, f"{settings.qdrant_url.rstrip('/')}/readyz")),
         Probe(
-            "llm_api",  # any OpenAI-compatible base: NVIDIA (default), OpenAI, ...
-            _models_probe(client, settings.nvidia_base_url, settings.llm_key, "LLM_API_KEY is not set"),
+            "llm_api",  # the OpenAI API by default; any OpenAI-compatible base works
+            _models_probe(client, settings.llm_base_url, settings.llm_key, "LLM_API_KEY is not set"),
         ),
     ]
     if settings.embedding_provider == "openai":
@@ -113,16 +112,6 @@ def default_probes(settings: Settings, client: httpx.AsyncClient) -> list[Probe]
                 "openai_embeddings",
                 _models_probe(
                     client, settings.openai_base_url, settings.openai_key, "OPENAI_API_KEY is not set"
-                ),
-            )
-        )
-    if settings.needs_nvidia_retrieval_key and not settings.llm_is_nvidia:
-        # The LLM probe does not cover NVIDIA retrieval when the LLM lives elsewhere (e.g. OpenAI).
-        probes.append(
-            Probe(
-                "nvidia_retrieval",
-                _models_probe(
-                    client, NVIDIA_CATALOG_URL, settings.nvidia_key, "NVIDIA_RETRIEVAL_API_KEY is not set"
                 ),
             )
         )

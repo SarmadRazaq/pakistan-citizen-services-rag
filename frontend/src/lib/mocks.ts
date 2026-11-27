@@ -299,7 +299,7 @@ export const mockNoticeSet: Notice[] = [
   },
   {
     code: "third_party_processing",
-    message: "Is jawab mein aap ki upload ki gayi file istemal hui. Jawab NVIDIA API par hosted model ne banaya.",
+    message: "Is jawab mein aap ki upload ki gayi file istemal hui. Jawab hosted model (OpenAI API) ne banaya.",
   },
 ];
 
@@ -367,7 +367,7 @@ export const mockPassportAnswer: AskResponse = {
     },
     {
       code: "third_party_processing",
-      message: "Is jawab mein aap ki upload ki gayi file istemal hui. Jawab NVIDIA API par hosted model ne banaya.",
+      message: "Is jawab mein aap ki upload ki gayi file istemal hui. Jawab hosted model (OpenAI API) ne banaya.",
     },
   ],
   language: { question: "roman_ur", answer: "roman_ur" },
@@ -392,7 +392,7 @@ export const mockPassportAnswer: AskResponse = {
     chunks: PASSPORT_CHUNKS,
   },
   guardrails: { input: "passed", output: "passed", flags: ["chunk_injection_flagged"] },
-  provider: { endpoint: "nvidia", model: "deepseek-ai/deepseek-v3.1", seller: null, attempts: 1 },
+  provider: { endpoint: "hosted", model: "gpt-4.1-mini", seller: null, attempts: 1 },
   usage: { input_tokens: 3920, output_tokens: 210, cost_usd: 0, list_price_equivalent_usd: 0.0011 },
   latency_ms: { total: 5310, understand: 1180, retrieve: 60, rerank: 140, generate: 3720, guard_output: 90 },
 };
@@ -485,7 +485,7 @@ export const mockAdviceAnswer: AskResponse = {
     chunks: RENT_CHUNKS,
   },
   guardrails: { input: "passed", output: "passed", flags: ["advice_request"] },
-  provider: { endpoint: "nvidia", model: "deepseek-ai/deepseek-v3.1", seller: null, attempts: 1 },
+  provider: { endpoint: "hosted", model: "gpt-4.1-mini", seller: null, attempts: 1 },
   usage: { input_tokens: 4105, output_tokens: 188, cost_usd: 0, list_price_equivalent_usd: 0.0012 },
   latency_ms: { total: 6020, understand: 1240, retrieve: 64, rerank: 151, generate: 4380, guard_output: 185 },
 };
@@ -740,7 +740,7 @@ export const mockApi: Api = {
       list_price_per_question_usd: 0.0021,
       error_rate: 0.014,
       fallback_rate: 0.03,
-      provider_mix: admin ? { "deepseek-ai/deepseek-v3.1": 120, "meta/llama-3.3-70b-instruct": 22 } : null,
+      provider_mix: admin ? { "gpt-4.1-mini": 120, "gpt-4o-mini": 22 } : null,
     };
     return summary;
   },

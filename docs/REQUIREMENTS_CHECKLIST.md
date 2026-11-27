@@ -63,7 +63,7 @@ Checked against the code on 25 Nov 2026.
 | **D4.** Frameworks (RAGAS, LLM judge, Langfuse…) justified in EVAL.md; judge reliability checked | M8 | 🟡 code ✅ (`evals/calibration.py`), no results | `EVAL.md` sections exist |
 | **D5.** ≥ 2 configurations compared, winner picked by numbers | M8 | 🟡 configs exist, but the service **ignores the `X-Eval-Config` header** the eval sends, so R1/R5/G2 cannot be measured yet; no results | `evals/configs/`: R1 dense only, R4 hybrid + rerank, R5 hybrid no rerank, CB closed book, G2 other generator |
 | **D6.** One command runs the whole eval and saves results; EVAL.md with failure analysis | M8 | 🟡 command ✅, no results | `python -m evals.run` (see `EVAL.md` "How to reproduce") |
-| **E.** Input guardrails: empty, too long, off-topic, prompt injection, jailbreak | M9 | ✅ | `app/guardrails/input_guards.py`, NemoGuard jailbreak detection |
+| **E.** Input guardrails: empty, too long, off-topic, prompt injection, jailbreak | M9 | ✅ | `app/guardrails/input_guards.py` (multilingual injection and jailbreak patterns, decoded variants, optional injected classifier) |
 | **E.** Output guardrails: no invented facts/citations, no system prompt or key leaks | M9 | ✅ | `app/guardrails/output_guards.py` |
 | **E.** Each guardrail proven in the video | M9, M15 | 👤 | video |
 | **F.** Error codes 200, 201, 204, 400, 404, 409, 415, 422, 429, 503, consistent format | M10 | ✅ | RFC 9457 problem+json, `app/core/errors.py` |
@@ -121,7 +121,7 @@ Checked against the code on 25 Nov 2026.
 |---|---|---|---|
 | A. Signup, login, JWT, hashed passwords, own documents only | B1 (5) | ✅ | `app/api/auth.py`, `app/core/tenancy.py`, `test_cross_tenant_access_is_404_and_public_writes_403` |
 | B. Multilingual: Urdu / Roman Urdu questions, answer in the question's language, separate results | B2 (4) | 🟡 works ✅, separate results ❌ | needs multilingual golden items + eval run |
-| C. Tracing per step, p50/p95, tokens, cost per question, error rate, dashboard | B3 (4) | ✅ | per-step latency in the answer's debug drawer and the `ask.done` log line; `GET /metrics/summary` ([app/observability/metrics.py](../app/observability/metrics.py)) gives p50/p95, tokens, cost and list price per question, error and fallback rate; dashboard at `/metrics`. Cost is $0 on the NVIDIA free tier; list price needs `MODEL_PRICES`. Langfuse is configured but never called |
+| C. Tracing per step, p50/p95, tokens, cost per question, error rate, dashboard | B3 (4) | ✅ | per-step latency in the answer's debug drawer and the `ask.done` log line; `GET /metrics/summary` ([app/observability/metrics.py](../app/observability/metrics.py)) gives p50/p95, tokens, cost and list price per question, error and fallback rate; dashboard at `/metrics`. Hosted calls count as billed (`LLM_BILLED=false` zeroes the cost); list price needs `MODEL_PRICES`. Langfuse is configured but never called |
 | D. Modern frontend | B4 (3) | ✅ | Next.js + Tailwind |
 | E. Extra file types (TXT, MD, PPTX…) | B5 (2) | ✅ | PPTX, HTML, TXT, MD |
 | F. Hidden instructions treated as data; corrupt/malicious files rejected | B6 (3) | ✅ | `test_doc_injection_not_followed`, `test_zip_bomb`, `test_macro_documents`, `test_corrupt_files` |

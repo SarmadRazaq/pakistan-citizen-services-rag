@@ -209,7 +209,7 @@ class FakeLLM:
     default: Reply = '{"answerable": false, "answer": "", "citations": []}'
     seen: list[list[LLMMessage]] = field(default_factory=list)
     models: list[str | None] = field(default_factory=list)  # the `model` override of each call
-    endpoint: Literal["nvidia", "ollama"] = "nvidia"
+    endpoint: Literal["hosted", "ollama"] = "hosted"
     model: str = "fake-model"
 
     async def complete(

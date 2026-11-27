@@ -2,14 +2,14 @@
 
 Usage:  .venv\\Scripts\\python scripts\\check_models.py [--probe]
 
-- Lists every model the LLM key can see (GET {LLM_BASE_URL}/models; NVIDIA, OpenAI or any
-  OpenAI-compatible base).
+- Lists every model the LLM key can see (GET {LLM_BASE_URL}/models; the OpenAI API by default).
 - Reports which of GENERATION_MODELS / HELPER_MODEL / JUDGE_MODEL are missing.
 - With --probe, sends one tiny JSON-mode request per configured model and reports
   latency, whether JSON mode was accepted, and whether the reply parsed as JSON.
-- Checks exactly the retrieval providers configured: the NVIDIA embedder / reranker, or the OpenAI
-  embedder (EMBEDDING_PROVIDER=openai). Local providers and RERANKER_PROVIDER=none are not called;
-  the output lists what was skipped and why. Each request carries only its own provider's key.
+- Checks the retrieval models actually configured: the OpenAI embedder at EMBEDDING_DIMENSION
+  dimensions (EMBEDDING_PROVIDER=openai) and whether the local reranker can run here (FlagEmbedding
+  installed, weights cached). EMBEDDING_PROVIDER=local and RERANKER_PROVIDER=none are not called;
+  the output lists what was skipped and why.
 - Writes the result to evals/configs/models_available.json (no key inside), so the
   evaluation records exactly which models existed on the day it ran.
 """
@@ -17,7 +17,9 @@ Usage:  .venv\\Scripts\\python scripts\\check_models.py [--probe]
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -74,97 +76,64 @@ def _probe(client: httpx.Client, base: str, model: str, settings: Settings, key:
     return {"ok": True, "latency_ms": latency, "json_mode": json_mode, "json_parsed": parsed}
 
 
-Request = tuple[str, str, dict[str, object], dict[str, str], bool]  # model, url, body, headers, listed?
+Request = tuple[str, str, dict[str, object], dict[str, str]]  # model, url, body, headers
 
 
-def _retrieval_requests(settings: Settings, skipped: dict[str, str]) -> dict[str, Request]:
-    requests: dict[str, Request] = {}
-    if settings.embedding_provider == "nvidia":
-        if settings.nvidia_key:
-            body: dict[str, object] = {
-                "model": settings.hosted_embedding_model,
-                "input": ["passport"],
-                "input_type": "query",
-                "encoding_format": "float",
-                "truncate": "END",
-            }
-            url = f"{settings.nvidia_base_url.rstrip('/')}/embeddings"
-            requests["embedding"] = (
-                settings.hosted_embedding_model,
-                url,
-                body,
-                _bearer(settings.nvidia_key),
-                True,
-            )
-        else:
-            skipped["embedding"] = "NVIDIA embedder selected but no NVIDIA key is set"
-    elif settings.embedding_provider == "openai":
-        if settings.openai_key:
-            body = {
-                "model": settings.openai_embedding_model,
-                "input": ["passport"],
-                "encoding_format": "float",
-                "dimensions": settings.embedding_dimension,
-            }
-            url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
-            requests["embedding"] = (
-                settings.openai_embedding_model,
-                url,
-                body,
-                _bearer(settings.openai_key),
-                False,
-            )
-        else:
-            skipped["embedding"] = "OpenAI embedder selected but OPENAI_API_KEY is not set"
-    else:
+def _embedding_request(settings: Settings, skipped: dict[str, str]) -> Request | None:
+    if settings.embedding_provider != "openai":
         skipped["embedding"] = "EMBEDDING_PROVIDER=local (runs on this machine, nothing to call)"
+        return None
+    if not settings.openai_key:
+        skipped["embedding"] = "OpenAI embedder selected but OPENAI_API_KEY is not set"
+        return None
+    body: dict[str, object] = {
+        "model": settings.openai_embedding_model,
+        "input": ["passport"],
+        "encoding_format": "float",
+        "dimensions": settings.embedding_dimension,
+    }
+    url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
+    return settings.openai_embedding_model, url, body, _bearer(settings.openai_key)
 
-    if settings.reranker_provider == "nvidia":
-        if settings.nvidia_key:
-            rerank_body: dict[str, object] = {
-                "model": settings.hosted_reranker_model,
-                "query": {"text": "passport fee"},
-                "passages": [{"text": "The passport fee is listed on the office page."}],
-                "truncate": "END",
-            }
-            requests["reranker"] = (
-                settings.hosted_reranker_model,
-                settings.reranker_url,
-                rerank_body,
-                _bearer(settings.nvidia_key),
-                True,
-            )
-        else:
-            skipped["reranker"] = "NVIDIA reranker selected but no NVIDIA key is set"
-    elif settings.reranker_provider == "none":
+
+def _hf_cache_dir() -> Path:
+    hub = os.environ.get("HF_HUB_CACHE")
+    if hub:
+        return Path(hub)
+    return Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+
+
+def check_local_reranker(settings: Settings, skipped: dict[str, str]) -> dict[str, object] | None:
+    """Can the local reranker run here? Nothing is loaded and nothing is downloaded."""
+    if settings.reranker_provider == "none":
         skipped["reranker"] = "RERANKER_PROVIDER=none (retrieval gates on dense similarity)"
-    else:
-        skipped["reranker"] = "RERANKER_PROVIDER=local (runs on this machine, nothing to call)"
-
-    skipped["injection"] = (
-        "INJECTION_PROVIDER=none (heuristic guards only)"
-        if settings.injection_provider == "none"
-        else "INJECTION_PROVIDER=nvidia (classifier not probed here)"
-    )
-    return requests
+        return None
+    cached = (_hf_cache_dir() / f"models--{settings.reranker_model.replace('/', '--')}").is_dir()
+    return {
+        "role": "reranker",
+        "package_installed": importlib.util.find_spec("FlagEmbedding") is not None,
+        "weights_cached": cached,
+    }
 
 
 def check_retrieval(
-    client: httpx.Client, settings: Settings, available: list[str]
+    client: httpx.Client, settings: Settings
 ) -> tuple[dict[str, dict[str, object]], dict[str, str]]:
-    """Visibility and reachability of the hosted retrieval models actually configured.
+    """Reachability of the OpenAI embeddings and availability of the local reranker.
 
     Returns `(results by model id, skipped role -> reason)`.
     """
     out: dict[str, dict[str, object]] = {}
     skipped: dict[str, str] = {}
-    for role, (model, url, body, headers, check_listed) in _retrieval_requests(settings, skipped).items():
-        entry: dict[str, object] = {"role": role, "available": model in available if check_listed else True}
+    request = _embedding_request(settings, skipped)
+    if request is not None:
+        model, url, body, headers = request
+        entry: dict[str, object] = {"role": "embedding"}
         started = time.perf_counter()
         try:
             r = client.post(url, json=body, headers=headers)
             ok = r.status_code == 200
-            if ok and role == "embedding":
+            if ok:
                 rows = r.json().get("data") or [{}]
                 dim = len(rows[0].get("embedding") or [])
                 ok = dim == settings.embedding_dimension
@@ -176,6 +145,9 @@ def check_retrieval(
             entry["status"] = type(exc).__name__
         entry["latency_ms"] = round((time.perf_counter() - started) * 1000)
         out[model] = entry
+    reranker = check_local_reranker(settings, skipped)
+    if reranker is not None:
+        out[settings.reranker_model] = reranker
     return out, skipped
 
 
@@ -190,7 +162,7 @@ def main() -> int:
         print("No LLM key. Set LLM_API_KEY in .env (OPENAI_API_KEY also works for an OpenAI base URL).")
         return 2
 
-    base = settings.nvidia_base_url.rstrip("/")
+    base = settings.llm_base_url.rstrip("/")
     with httpx.Client(timeout=60) as client:
         r = client.get(f"{base}/models", headers=_bearer(key))
         if r.status_code != 200:
@@ -216,7 +188,7 @@ def main() -> int:
                 if args.probe and model in available:
                     entry["probe"] = _probe(client, base, model, settings, key)
                 configured[model] = entry
-        retrieval, skipped = check_retrieval(client, settings, available)
+        retrieval, skipped = check_retrieval(client, settings)
         report["configured"] = configured
         report["retrieval"] = retrieval
         report["skipped"] = skipped
@@ -230,17 +202,22 @@ def main() -> int:
         mark = "OK " if entry["available"] else "MISSING"
         extra = f"  probe={entry['probe']}" if "probe" in entry else ""
         print(f"  [{mark}] {entry['role']:<10} {model}{extra}")
-    print("Hosted retrieval models:")
+    print("Retrieval models:")
     if not retrieval:
         print("  (none configured)")
     for model, entry in retrieval.items():
-        seen = "listed" if entry["available"] else "not listed"
+        if entry["role"] == "reranker":
+            mark = "OK " if entry["package_installed"] else "FAIL"
+            cached = "weights cached" if entry["weights_cached"] else "weights download on first use"
+            print(f"  [{mark}] {entry['role']:<10} {model}  (local, {cached})")
+            continue
         mark = "OK " if entry["reachable"] else "FAIL"
-        print(f"  [{mark}] {entry['role']:<10} {model}  ({seen}, status={entry['status']})")
+        detail = f"dim={entry.get('dimension')}, status={entry['status']}"
+        print(f"  [{mark}] {entry['role']:<10} {model}  ({detail})")
     for role, reason in skipped.items():
         print(f"  [SKIP] {role:<10} {reason}")
     missing = [m for m, e in configured.items() if not e["available"]]
-    missing += [m for m, e in retrieval.items() if not e["reachable"]]
+    missing += [m for m, e in retrieval.items() if not e.get("reachable", e.get("package_installed"))]
     if missing:
         print("\nPick replacements from evals/configs/models_available.json and set them in .env.")
     print(f"\nWrote {OUT}")

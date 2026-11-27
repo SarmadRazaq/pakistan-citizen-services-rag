@@ -2,8 +2,8 @@
 
 - `list_price_usd`: tokens x `Settings.model_prices` (USD per 1M input/output tokens). Models with
   no configured price count as 0, so the figure is only ever a lower bound of "what it would cost".
-- `cost_usd`: what was actually paid. Hosted calls count when `Settings.hosted_billed` (LLM_BILLED, old name
-  NVIDIA_BILLED; unset = billed on an OpenAI base URL, free on NVIDIA's); the local Ollama fallback is 0.
+- `cost_usd`: what was actually paid. Hosted calls count when `Settings.hosted_billed`
+  (LLM_BILLED; unset = billed); the local Ollama fallback is 0.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ PER_MILLION = 1_000_000
 @dataclass(frozen=True, slots=True)
 class ModelUsage:
     model: str
-    endpoint: str  # "nvidia" (the hosted LLM endpoint, whatever the provider) | "ollama"
+    endpoint: str  # "hosted" (the hosted LLM endpoint) | "ollama"
     input_tokens: int
     output_tokens: int
 
@@ -33,6 +33,6 @@ def request_cost(settings: Settings, calls: Iterable[ModelUsage]) -> tuple[float
             continue
         priced = (call.input_tokens * price[0] + call.output_tokens * price[1]) / PER_MILLION
         list_price += priced
-        if call.endpoint == "nvidia" and settings.hosted_billed:
+        if call.endpoint == "hosted" and settings.hosted_billed:
             cost += priced
     return cost, list_price

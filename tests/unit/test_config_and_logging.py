@@ -32,7 +32,7 @@ def test_csv_lists_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1X2EifQ.c2lnbmF0dXJlLXBhcnQ",
         "35202-1234567-1",  # CNIC-shaped number
         "0x" + "a" * 64,
-        "nvapi-" + "x" * 40,
+        "sk-" + "x" * 40,
     ],
 )
 def test_secret_patterns_are_redacted(secret: str) -> None:

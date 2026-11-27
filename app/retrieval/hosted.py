@@ -1,12 +1,10 @@
-"""Hosted retrieval models: the NVIDIA embedder, reranker and jailbreak classifier, and the OpenAI embedder.
+"""Hosted retrieval models: the OpenAI embedder and the lexical sparse encoder.
 
-- `NvidiaEmbedder` calls `baai/bge-m3` (`POST /v1/embeddings`) for the dense vector. The hosted API has
-  no sparse output, so the sparse half of every `Embedding` comes from `LexicalSparseEncoder`.
-- `OpenAIEmbedder` calls OpenAI `text-embedding-3-*` (`dimensions` = EMBEDDING_DIMENSION), same sparse half.
-- `NvidiaReranker` calls the NeMo Retriever reranking NIM and turns each logit into a score in [0, 1].
-- `NvidiaJailbreakClassifier` calls NemoGuard jailbreak-detect and implements `InjectionClassifier`.
+- `OpenAIEmbedder` calls OpenAI `text-embedding-3-*` (`POST /v1/embeddings`, `dimensions` =
+  EMBEDDING_DIMENSION) for the dense vector. The hosted API has no sparse output, so the sparse half of
+  every `Embedding` comes from `LexicalSparseEncoder`.
 
-All three share one HTTP helper: Bearer key, per-request timeout, up to two retries on 429 / 5xx /
+The embedder shares one HTTP helper: Bearer key, per-request timeout, up to two retries on 429 / 5xx /
 transport errors (exponential backoff with jitter, honouring a capped `Retry-After`), no retry on other
 4xx, and every failure surfaces as `AppError(DEPENDENCY_UNAVAILABLE)`. Only the model, status, latency
 and attempt number are logged: never the key, the texts or the response bodies, since a Chunk of a
@@ -17,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import math
 import random
 import re
 import time
@@ -42,7 +39,6 @@ log = structlog.get_logger(__name__)
 MAX_RETRIES = 2
 QUERY_CACHE_SIZE = 2048
 OPENAI_MAX_INPUTS = 2048  # OpenAI's per-request limit on embedding inputs
-RERANK_MAX_PASSAGES = 512  # the reranking NIM accepts at most 512 passages per request
 SPARSE_INDEX_MASK = 0x7FFFFFFF  # 31 bits: valid for Qdrant's unsigned 32-bit sparse indices
 BM25_K1 = 1.2
 BM25_B = 0.75
@@ -122,9 +118,9 @@ class LexicalSparseEncoder:
 
 
 class _HostedClient:
-    """Shared HTTP plumbing for the hosted retrieval endpoints (NVIDIA, OpenAI)."""
+    """Shared HTTP plumbing for the hosted retrieval endpoints."""
 
-    _KEY_NAME = "NVIDIA_API_KEY"
+    _KEY_NAME = "OPENAI_API_KEY"
 
     def __init__(
         self,
@@ -136,7 +132,7 @@ class _HostedClient:
         max_retries: int = MAX_RETRIES,
         api_key: str | None = None,
     ) -> None:
-        self._key = settings.nvidia_key if api_key is None else api_key.strip()
+        self._key = settings.openai_key if api_key is None else api_key.strip()
         self._timeout_s = settings.hosted_retrieval_timeout_s
         self._client = client or httpx.AsyncClient()
         self._owns_client = client is None
@@ -177,10 +173,6 @@ class _HostedClient:
                 transient = status == 429 or status >= 500
                 retry_after = parse_retry_after(response.headers.get("Retry-After"))
             self._log(model, status, sent, retries + 1)
-            if status in (400, 422):
-                raise _RequestRejectedError(
-                    ErrorCode.DEPENDENCY_UNAVAILABLE, "A hosted model rejected the request."
-                )
             if not transient or retries >= self._max_retries:
                 raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "A hosted model is unavailable right now.")
             await self._sleep(backoff_delay(retries, retry_after_s=retry_after, rng=self._rng))
@@ -197,10 +189,6 @@ class _HostedClient:
         )
 
 
-class _RequestRejectedError(AppError):
-    """A 400/422 from a hosted model: the request shape was refused (not a transient failure)."""
-
-
 def _bad_reply() -> AppError:
     return AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "A hosted model returned an unexpected reply.")
 
@@ -208,8 +196,7 @@ def _bad_reply() -> AppError:
 class _HostedEmbedder(_HostedClient):
     """Shared `Embedder` logic: batching, query cache, vector validation, lexical sparse half.
 
-    Subclasses set `model_name` and `_url`, and may add body fields (`_extra_body`) or change how the
-    request is sent (`_fetch`).
+    Subclasses set `model_name` and `_url`, and may add body fields (`_extra_body`).
     """
 
     def __init__(
@@ -243,17 +230,14 @@ class _HostedEmbedder(_HostedClient):
     def _extra_body(self) -> dict[str, Any]:
         return {}
 
-    async def _fetch(self, body: dict[str, Any], input_type: str) -> Any:
-        return await self._post(self._url, body, model=self.model_name)
-
-    async def _dense(self, texts: Sequence[str], input_type: str) -> list[tuple[float, ...]]:
+    async def _dense(self, texts: Sequence[str]) -> list[tuple[float, ...]]:
         body: dict[str, Any] = {
             "model": self.model_name,
             "input": list(texts),
             "encoding_format": "float",
             **self._extra_body(),
         }
-        data = await self._fetch(body, input_type)
+        data = await self._post(self._url, body, model=self.model_name)
         try:
             rows = sorted(data["data"], key=lambda row: row["index"])
             vectors = [tuple(float(v) for v in row["embedding"]) for row in rows]
@@ -267,7 +251,7 @@ class _HostedEmbedder(_HostedClient):
         out: list[Embedding] = []
         for start in range(0, len(texts), self._batch_size):
             batch = texts[start : start + self._batch_size]
-            vectors = await self._dense(batch, "passage")
+            vectors = await self._dense(batch)
             out.extend(
                 Embedding(vec, self._sparse.encode_document(text))
                 for vec, text in zip(vectors, batch, strict=True)
@@ -279,7 +263,7 @@ class _HostedEmbedder(_HostedClient):
         if cached is not None:
             self._query_cache.move_to_end(text)
             return cached
-        (vec,) = await self._dense([text], "query")
+        (vec,) = await self._dense([text])
         emb = Embedding(vec, self._sparse.encode_query(text))
         self._query_cache[text] = emb
         if len(self._query_cache) > QUERY_CACHE_SIZE:
@@ -287,44 +271,11 @@ class _HostedEmbedder(_HostedClient):
         return emb
 
 
-class NvidiaEmbedder(_HostedEmbedder):
-    """`Embedder` over the hosted BGE-M3: dense from NVIDIA, sparse from `LexicalSparseEncoder`."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        *,
-        client: httpx.AsyncClient | None = None,
-        sparse: LexicalSparseEncoder | None = None,
-        sleep: Sleep = asyncio.sleep,
-        rng: random.Random | None = None,
-    ) -> None:
-        super().__init__(settings, client=client, sparse=sparse, sleep=sleep, rng=rng)
-        self.model_name = settings.hosted_embedding_model
-        self._url = f"{settings.nvidia_base_url.rstrip('/')}/embeddings"
-        # Asymmetric models (NV-Embed-QA, E5) need `input_type`; symmetric ones such as BGE-M3 may
-        # reject it. Send it first; on a 400/422 retry once without it and remember (like JSON mode
-        # in the LLM router).
-        self._send_input_type = True
-
-    def _extra_body(self) -> dict[str, Any]:
-        return {"truncate": "END"}
-
-    async def _fetch(self, body: dict[str, Any], input_type: str) -> Any:
-        if self._send_input_type:
-            try:
-                return await self._post(self._url, {**body, "input_type": input_type}, model=self.model_name)
-            except _RequestRejectedError:
-                log.info("hosted.embedder_input_type_unsupported", model=self.model_name)
-                self._send_input_type = False
-        return await self._post(self._url, body, model=self.model_name)
-
-
 class OpenAIEmbedder(_HostedEmbedder):
     """`Embedder` over OpenAI `POST /embeddings` (text-embedding-3-*): dense from OpenAI, sparse lexical.
 
     `dimensions` asks the text-embedding-3 models for EMBEDDING_DIMENSION (1024) values, so the Qdrant
-    collection keeps the size it has with BGE-M3. No `input_type` / `truncate`. OpenAI allows 2048
+    collection stays at that size. OpenAI allows 2048
     inputs per request; EMBED_BATCH_SIZE (32) stays far below that.
     """
 
@@ -348,77 +299,3 @@ class OpenAIEmbedder(_HostedEmbedder):
 
     def _extra_body(self) -> dict[str, Any]:
         return {"dimensions": self.dimension}
-
-
-def _sigmoid(x: float) -> float:
-    if x >= 0:
-        return 1.0 / (1.0 + math.exp(-x))
-    e = math.exp(x)
-    return e / (1.0 + e)
-
-
-class NvidiaReranker(_HostedClient):
-    """`Reranker` over the hosted NeMo Retriever reranking NIM; logits are sigmoid-normalised."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        *,
-        client: httpx.AsyncClient | None = None,
-        sleep: Sleep = asyncio.sleep,
-        rng: random.Random | None = None,
-    ) -> None:
-        super().__init__(settings, client=client, sleep=sleep, rng=rng)
-        self.model_name = settings.hosted_reranker_model
-        self._url = settings.reranker_url
-
-    async def warmup(self) -> None:
-        return None
-
-    def unload(self) -> None:
-        return None
-
-    async def rerank(self, query: str, passages: Sequence[str]) -> list[float]:
-        scores: list[float] = []
-        for start in range(0, len(passages), RERANK_MAX_PASSAGES):
-            batch = passages[start : start + RERANK_MAX_PASSAGES]
-            body = {
-                "model": self.model_name,
-                "query": {"text": query},
-                "passages": [{"text": p} for p in batch],
-                "truncate": "END",
-            }
-            data = await self._post(self._url, body, model=self.model_name)
-            logits: dict[int, float] = {}
-            try:
-                for row in data["rankings"]:
-                    logits[int(row["index"])] = float(row["logit"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise _bad_reply() from exc
-            if set(logits) != set(range(len(batch))):
-                raise _bad_reply()
-            scores.extend(_sigmoid(logits[i]) for i in range(len(batch)))
-        return scores
-
-
-class NvidiaJailbreakClassifier(_HostedClient):
-    """`InjectionClassifier` over NemoGuard jailbreak-detect.
-
-    No retries: the input guard fails open and logs when this raises, and a Question must not wait on
-    a slow classifier.
-    """
-
-    def __init__(self, settings: Settings, *, client: httpx.AsyncClient | None = None) -> None:
-        super().__init__(settings, client=client, max_retries=0)
-        self._url = settings.jailbreak_detect_url
-        self._model = "nemoguard-jailbreak-detect"
-
-    async def score(self, text: str) -> float:
-        data = await self._post(self._url, {"input": text}, model=self._model)
-        raw = data.get("score") if isinstance(data, dict) else None
-        if isinstance(raw, int | float) and not isinstance(raw, bool):
-            return min(1.0, max(0.0, float(raw)))
-        flag = data.get("jailbreak") if isinstance(data, dict) else None
-        if isinstance(flag, bool):
-            return 1.0 if flag else 0.0
-        raise _bad_reply()

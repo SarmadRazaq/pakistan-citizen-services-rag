@@ -8,7 +8,7 @@ from app.config import Settings
 
 GOOD: dict[str, Any] = {
     "jwt_secret": "x" * 48,
-    "nvidia_api_key": "nvapi-test",
+    "llm_api_key": "sk-test",
     "cors_origins": ["https://app.example.org"],
     "log_question_text": False,
 }
@@ -27,7 +27,8 @@ def test_valid_prod_config_passes() -> None:
     [
         ({"jwt_secret": "change-me-in-.env"}, "JWT_SECRET is still the default"),
         ({"jwt_secret": "short"}, "JWT_SECRET must be at least 32"),
-        ({"nvidia_api_key": None}, "LLM_API_KEY"),
+        ({"llm_api_key": None, "embedding_provider": "local"}, "LLM_API_KEY"),
+        ({"llm_base_url": "https://llm.example.test/v1"}, "OPENAI_API_KEY"),
         ({"cors_origins": []}, "CORS_ORIGINS must not be empty"),
         ({"cors_origins": ["*"]}, "CORS_ORIGINS must not contain"),
         ({"log_question_text": True}, "LOG_QUESTION_TEXT"),
@@ -43,7 +44,7 @@ def test_each_rule_fails_alone(overrides: dict[str, Any], fragment: str) -> None
 
 def test_all_problems_are_listed_without_secret_values() -> None:
     with pytest.raises(ValueError) as exc:
-        prod(jwt_secret="tiny-secret", nvidia_api_key=None, cors_origins=["*"], log_question_text=True)
+        prod(jwt_secret="tiny-secret", llm_api_key=None, cors_origins=["*"], log_question_text=True)
     message = str(exc.value)
     for fragment in ("JWT_SECRET", "LLM_API_KEY", "CORS_ORIGINS", "LOG_QUESTION_TEXT"):
         assert fragment in message

@@ -4,8 +4,8 @@ Layers for injection / jailbreak:
 1. pattern lists in English, Urdu and Roman Urdu (`patterns/injection.yaml`, `patterns/jailbreak.yaml`),
    matched on the sanitised text and on decoded variants (base64 payloads, rot13, leetspeak,
    Cyrillic/Greek homoglyphs);
-2. an optional `InjectionClassifier` (hosted NemoGuard jailbreak-detect, see
-   `build_injection_classifier`) above a threshold;
+2. an optional `InjectionClassifier` (injected by the caller; none is built by default) above a
+   threshold;
 3. the helper model's `injection_suspect` flag, recorded as a guard flag by the pipeline.
 
 GI-6 (off-topic), GI-7 (no documents) and GI-9 (foreign doc_ids) live in the pipeline/service,
@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 
 import structlog
 
-from app.config import Settings
 from app.core.errors import AppError, ErrorCode
 from app.generation.prompts import message
 from app.generation.query_understanding import detect_language
@@ -58,15 +57,6 @@ class InputGuardResult:
     text: str  # sanitised question: what the rest of the pipeline sees
     status: str = "passed"  # GuardrailInfo.input: passed | sanitized
     flags: tuple[str, ...] = field(default_factory=tuple)
-
-
-def build_injection_classifier(settings: Settings) -> InjectionClassifier | None:
-    """The hosted NemoGuard jailbreak classifier, or None (provider `none`, or no NVIDIA key)."""
-    if settings.injection_provider != "nvidia" or not settings.nvidia_key:
-        return None
-    from app.retrieval.hosted import NvidiaJailbreakClassifier
-
-    return NvidiaJailbreakClassifier(settings)
 
 
 def _is_invisible(ch: str) -> bool:

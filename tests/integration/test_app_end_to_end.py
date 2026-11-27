@@ -60,7 +60,7 @@ class SourceQuotingLLM:
                         "citations": [{"source": sid, "quote": quote}],
                     }
                 )
-        return LLMResult(text=text, endpoint="nvidia", model="fake", input_tokens=50, output_tokens=20)
+        return LLMResult(text=text, endpoint="hosted", model="fake", input_tokens=50, output_tokens=20)
 
     async def available_models(self) -> list[str]:
         return ["fake"]

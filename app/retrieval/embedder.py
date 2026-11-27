@@ -61,7 +61,7 @@ class M3Model(Protocol):
 
 def default_m3_factory(settings: Settings) -> Callable[[], M3Model]:
     def load() -> M3Model:
-        from FlagEmbedding import BGEM3FlagModel  # type: ignore[import-not-found, unused-ignore]
+        from FlagEmbedding import BGEM3FlagModel  # type: ignore[import-not-found, import-untyped, unused-ignore]
 
         device = resolve_device(settings.device)
         use_fp16 = settings.gpu_fp16 and device.startswith("cuda")
