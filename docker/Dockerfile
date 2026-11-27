@@ -1,4 +1,5 @@
-# API image. Every model is hosted (NVIDIA API); only Tesseract OCR runs locally, so no GPU is needed.
+# API image. Chat and embeddings are hosted (OpenAI API); only Tesseract OCR runs locally, so no GPU is needed.
+# The image carries no reranker model (no torch): run it with RERANKER_PROVIDER=none (the compose default).
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

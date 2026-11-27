@@ -2,35 +2,25 @@
 
 These are the human prerequisites from the feedback (items 2–5). Work through them in one sitting; most take minutes. Tick them here so the build can rely on them.
 
-## Hosted models: first run (added 25 Nov)
+## Hosted models: first run (OpenAI)
 
-All models except Tesseract OCR now run on NVIDIA's hosted APIs; nothing has been called with a real key yet.
-
-| ✓ | Task | How |
-|---|---|---|
-| ☐ | **Probe every hosted model** | After the key is in `.env`: `.venv\Scripts\python scripts\check_models.py --probe`. It now also checks `HOSTED_EMBEDDING_MODEL` (baai/bge-m3) and `HOSTED_RERANKER_MODEL`. Replace any id it reports missing. |
-| ☐ | **Re-index the Official corpus** | Sparse vectors changed (built-in lexical encoder instead of BGE-M3's), so drop the old collection and re-run `scripts\seed_corpus.py`. |
-| ☐ | **Retune `TAU_REFUSE`** | 0.3 was set for the local reranker. Run the eval once and pick the threshold from the hosted reranker's scores. |
-| ☐ | **Start the stack in Docker** | Start Docker Desktop, then follow `docs/DEPLOY.md` (`docker compose --profile api up -d --build`). The images have not been built yet. |
-
-## No NVIDIA key? OpenAI first run
-
-NVIDIA's catalog is not offered in Pakistan, so use the OpenAI path instead of the NVIDIA rows below.
+Chat and embeddings run on the OpenAI API and the reranker runs locally on your GPU; nothing has been called with a real key yet.
 
 | ✓ | Task | How |
 |---|---|---|
 | ☐ | **Create an OpenAI API key and add credit** | platform.openai.com, API keys, then a small prepaid balance. Do not paste the key in chat. |
-| ☐ | **Fill `.env`** | Copy `.env.example` to `.env`, uncomment the "OpenAI setup (no NVIDIA key)" block and put your key in `OPENAI_API_KEY=`. Comment out the NVIDIA lines it replaces. |
-| ☐ | **Check the setup** | `.venv\Scripts\python scripts\check_models.py --probe`. Every configured model must show `OK`; it also tests OpenAI embeddings at 1024 dimensions and lists what it skipped (reranker, jailbreak classifier). |
-| ☐ | **Start from a fresh Qdrant collection** | Embeddings changed from BGE-M3 to OpenAI, so old vectors are unusable: delete the collection (or the Qdrant volume) and run `scripts\seed_corpus.py` again. |
-| ☐ | **Choose the reranker** | `RERANKER_PROVIDER=local` if your laptop GPU runs the BGE reranker, else `none`. Then re-run the eval and re-tune `TAU_KEEP` / `TAU_REFUSE` (they were set for NVIDIA reranker scores; with `none` they apply to dense similarity). |
+| ☐ | **Fill `.env`** | Copy `.env.example` to `.env` and put your key in `OPENAI_API_KEY=` (it serves chat and embeddings). `LLM_BASE_URL`, models and the rate limit are already set for OpenAI. |
+| ☐ | **Check the setup** | `.venv\Scripts\python scripts\check_models.py --probe`. Every configured model must show `OK`; it also tests OpenAI embeddings at 1024 dimensions and reports whether the local reranker can run. |
+| ☐ | **Start from a fresh Qdrant collection** | Embeddings are OpenAI's, so older vectors are unusable: delete the collection (or the Qdrant volume) and run `scripts\seed_corpus.py` again. |
+| ☐ | **Choose the reranker** | `RERANKER_PROVIDER=local` if your laptop GPU runs the BGE reranker, else `none`. Then re-run the eval and re-tune `TAU_KEEP` / `TAU_REFUSE` (with `none` they apply to dense similarity). |
 | ☐ | **Fill `MODEL_PRICES`** | Copy the current prices from openai.com/api/pricing so the dashboard shows real cost per question. |
+| ☐ | **Start the stack in Docker** | Start Docker Desktop, then follow `docs/DEPLOY.md` (`docker compose --profile api up -d --build`). The images have not been built yet. |
 
 ## Today, before ingestion (blocks the MVP)
 
 | ✓ | Task | How | Why |
 |---|---|---|---|
-| ☐ | **NVIDIA API key in `.env`** | Create a key on build.nvidia.com. Copy `.env.example` to `.env` and paste it as `NVIDIA_API_KEY=nvapi-…`. **Don't paste it in chat**; `.env` is gitignored. | Every answer and the eval need it |
+| ☐ | **OpenAI API key in `.env`** | Copy `.env.example` to `.env` and paste the key as `OPENAI_API_KEY=sk-…`. **Don't paste it in chat**; `.env` is gitignored. | Every answer and the eval need it |
 | ☐ | **Check the model ids** | `.\.venv\Scripts\python scripts\check_models.py --probe` | It shows which configured models your key can use, and whether JSON mode works. Replace any `MISSING` id in `.env` with one from `evals/configs/models_available.json`. |
 | ☐ | **Install Tesseract with Urdu** | Install the Windows build of Tesseract (e.g. `winget install UB-Mannheim.TesseractOCR`), and tick **Urdu** in the language list during setup. Then `tesseract --list-langs` must show `urd` and `eng`. | Scanned PDFs, image notices and junk text layers (E1, E46, D4) |
 | ☐ | **Measure OCR on real Urdu files** | `.\.venv\Scripts\python scripts\ocr_check.py "html for rag\ID-06__nadra-registration-policy-6-0-2-ur.pdf" --urdu --pages 12-14`, then the same for 1–2 scanned Urdu files from `corpus/SEED_SOURCES.md` (PB-09, RC-10) | If OCR is weak, we change the plan now (drop those sources), not on deadline day |

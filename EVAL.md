@@ -11,7 +11,7 @@ The plan is `PROJECT_BLUEPRINT.md` §10. Every table between `<!-- EVAL:START �
 # 1. the service is running (uvicorn on :8000) and the official corpus is ingested
 # 2. an eval account exists; its credentials come from the environment, never from git
 $env:EVAL_EMAIL = "eval@example.com"; $env:EVAL_PASSWORD = "<the eval account password>"
-# 3. NVIDIA_API_KEY is in .env (judge + closed-book baseline)
+# 3. OPENAI_API_KEY (or LLM_API_KEY) is in .env (judge + closed-book baseline)
 # 4. the service runs with EVAL_OVERRIDES_ENABLED=true and the eval account is an ADMIN; otherwise the
 #    X-Eval-Config header is ignored and R1/R5/G2 are reported as "NOT honoured"
 .\.venv\Scripts\python -m evals.run --split test                 # approved items, default configs
@@ -22,7 +22,7 @@ $env:EVAL_EMAIL = "eval@example.com"; $env:EVAL_PASSWORD = "<the eval account pa
 - Results: `evals/results/<timestamp>/{metrics.json, per_question.csv, answers.jsonl, report.md}`.
 - Every service response (`evals/.cache/api/`), judge call (`evals/.cache/judge/`) and closed-book call
   (`evals/.cache/closed_book/`) is cached on disk, keyed by sha256 of the request. `--offline`
-  reproduces the published numbers without the service or the NVIDIA API; `--no-cache` forces fresh calls.
+  reproduces the published numbers without the service or the LLM API; `--no-cache` forces fresh calls.
 - `metrics.json` records the golden-set sha256, the judge model and prompt version, the generator
   models and the exact command.
 
@@ -71,7 +71,7 @@ Configs live in `evals/configs/*.yaml` (blueprint §10.6). Winner rule, fixed be
 | `R4_hybrid_rerank` (**baseline**) | nothing: the service defaults (hybrid dense+sparse, RRF, rerank) | no |
 | `R1_dense_only` | `X-Eval-Config: {"retrieval_mode":"dense","rerank":false}` | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
 | `R5_hybrid_no_rerank` (opt-in) | `X-Eval-Config: {"retrieval_mode":"hybrid","rerank":false}` | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
-| `G2_qwen3_generator` (opt-in) | `X-Eval-Config: {"generation_model":"qwen/qwen3-235b-a22b"}` | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
+| `G2_gpt4o_mini_generator` (opt-in) | `X-Eval-Config: {"generation_model":"gpt-4o-mini"}` (baseline generator: `gpt-4.1-mini`) | **yes** (admin + `EVAL_OVERRIDES_ENABLED`) |
 | `CB_closed_book` | generator answers with no sources, called directly by the harness | no |
 
 **Service-side support.** Overrides travel as a compact JSON `X-Eval-Config` request header on `/search`
@@ -100,14 +100,14 @@ _Not run yet._
 
 ## Generator comparison
 
-_Placeholder._ G1–G3 (DeepSeek / Qwen3-235B / a third open-weight model) run on the winning retrieval
+_Placeholder._ G1–G3 (`gpt-4.1-mini` as the baseline, `gpt-4o-mini`, and a third model if one is added) run on the winning retrieval
 config once the service honours `generation_model` in `X-Eval-Config`. Selection rule, fixed in
 advance: maximize judge correctness, subject to faithfulness ≥ 0.85, refusal accuracy ≥ 0.8 and
 multilingual answer-language accuracy ≥ 0.9; tie-break by p95 latency, then fallback rate.
 
 ## Judge calibration
 
-The judge is `openai/gpt-oss-120b`: open-weight and a different family from the generator. To check it
+The judge is `gpt-4o`: a different, larger model than the generators (`gpt-4.1-mini`, `gpt-4o-mini`). It is the same vendor, so some self-preference bias remains possible, which is what the calibration below measures. To check it
 (blueprint §10.5):
 
 1. `python -m evals.calibration export --results evals/results/<timestamp>` writes a stratified sample

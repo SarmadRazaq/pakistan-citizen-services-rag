@@ -10,7 +10,7 @@ A multilingual (**English · Urdu · Roman Urdu**) question-answering service fo
 
 Every answer comes only from official documents, with a citation and the document's date. The service gives **information, not legal advice**.
 
-Built with **FastAPI**, a **LangGraph** answer pipeline, **Qdrant** hybrid search (dense + sparse, RRF, reranking), hosted models (OpenAI by default here, or NVIDIA's open-weight catalog: a setting, see DESIGN.md §4.7), and a **Next.js** frontend. Upload a document in the web app and the whole pipeline runs: validate → extract (OCR for scans) → clean → chunk → embed → store. Ask a question and you get a cited answer, the retrieved chunks with their scores, or a clear refusal.
+Built with **FastAPI**, a **LangGraph** answer pipeline, **Qdrant** hybrid search (dense + sparse, RRF, reranking), hosted OpenAI models for chat and embeddings plus a local GPU reranker (see DESIGN.md §4.7), and a **Next.js** frontend. Upload a document in the web app and the whole pipeline runs: validate → extract (OCR for scans) → clean → chunk → embed → store. Ask a question and you get a cited answer, the retrieved chunks with their scores, or a clear refusal.
 
 ## Documents in this repo
 
@@ -34,7 +34,7 @@ Prerequisites:
 - Docker Desktop (for Qdrant)
 - Node 20+ (frontend)
 - **Tesseract with Urdu and English language data**, for OCR of scanned pages
-- an **OpenAI API key** with credit (answer models and embeddings), and a GPU for the local reranker. Alternatively an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com/models) for the open-weight profile: see `.env.example` and DESIGN.md §4.7
+- an **OpenAI API key** with credit (answer models and embeddings), and a GPU for the local reranker (or `RERANKER_PROVIDER=none` without one): see `.env.example` and DESIGN.md §4.7
 
 ### 1. Backend
 
@@ -99,7 +99,7 @@ On Linux/macOS the same targets exist in the `Makefile` (`make install`, `make c
 
 ## Privacy: where your text goes
 
-- **The official corpus** contains public government documents. Questions over it are answered by hosted models on the **OpenAI API** (or NVIDIA's, depending on the profile), which processes the prompt under its API terms.
+- **The official corpus** contains public government documents. Questions over it are answered by hosted models on the **OpenAI API**, which processes the prompt under its API terms.
 - **Private uploads** follow `PRIVATE_CONTEXT_POLICY`:
   - `hosted_with_notice` (default): answers that use your uploaded text are generated through the hosted API, and the answer carries a "processed by a third-party model" notice. The upload screen says so before you upload.
   - `local_only`: answers that use your uploads run on the local Ollama model, so nothing private leaves the machine. Quality is lower, and those answers are marked *degraded*.
