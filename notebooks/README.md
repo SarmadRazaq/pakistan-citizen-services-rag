@@ -20,15 +20,15 @@ that turn chunks into indexed points). It is not a test and not part of the app.
 Notebooks 03 and 04 pick their models at the start and print which mode they are in.
 
 - **Offline (default, no network, no key).** `FakeEmbedder` dense vectors, the project's
-  `LexicalSparseEncoder` for the sparse half (the same composition `NvidiaEmbedder` uses), `FakeReranker`, the
+  `LexicalSparseEncoder` for the sparse half (the same composition `OpenAIEmbedder` uses), `FakeReranker`, the
   in-memory store and `FakeLLM` from `tests/fakes.py`. The banner reads
-  `offline mode: fake embeddings - run with NVIDIA_API_KEY for real scores`. Scores are deterministic but are
+  `offline mode: fake embeddings - run with an OpenAI key for real scores`. Scores are deterministic but are
   not semantic similarities. The fake LLM answers by quoting the best-matching source sentence, so quote
   verification and citation mapping still run for real.
-- **Hosted.** When `NVIDIA_API_KEY` is set (environment variable or `.env`, read through the app's
+- **Hosted.** When `OPENAI_API_KEY` (or `LLM_API_KEY`) is set (environment variable or `.env`, read through the app's
   `Settings`; it is never printed), the notebooks use `build_retrieval(settings, qdrant_location=":memory:")`
-  (NVIDIA BGE-M3 embedder and reranker, an in-memory Qdrant store) and `build_llm_clients(settings)` (hosted
-  LLM chain), plus the hosted jailbreak classifier for the input guard. Notebooks 01 and 02 never need a key.
+  (OpenAI embedder, the local BGE reranker, an in-memory Qdrant store) and `build_llm_clients(settings)` (hosted
+  LLM chain). Notebooks 01 and 02 never need a key.
 
 Set `RAG_NOTEBOOKS_OFFLINE=1` to force offline mode even when a key is configured. The committed outputs were
 produced offline.

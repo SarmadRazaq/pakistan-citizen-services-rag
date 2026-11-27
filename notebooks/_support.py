@@ -2,7 +2,7 @@
 
 Everything that matters is the real project code (`app.ingestion`, `app.retrieval`, `app.generation`).
 This module only holds the notebook plumbing: sample documents, mode selection (offline fakes vs hosted
-NVIDIA models) and the few lines that turn chunks into indexed points (what IngestionService does).
+OpenAI models) and the few lines that turn chunks into indexed points (what IngestionService does).
 """
 
 from __future__ import annotations
@@ -47,11 +47,11 @@ PUBLIC = "u_public"
 ALICE = TenantContext.for_user("u_alice", Role.USER, Scope.ALL)
 BOB = TenantContext.for_user("u_bob", Role.USER, Scope.ALL)
 
-OFFLINE_BANNER = "offline mode: fake embeddings - run with NVIDIA_API_KEY for real scores"
+OFFLINE_BANNER = "offline mode: fake embeddings - run with an OpenAI key for real scores"
 
 
 def hosted_mode() -> bool:
-    """True when an LLM key is set (LLM_API_KEY, NVIDIA_API_KEY or OPENAI_API_KEY; env or .env)."""
+    """True when an LLM key is set (LLM_API_KEY or OPENAI_API_KEY; env or .env)."""
     if os.environ.get("RAG_NOTEBOOKS_OFFLINE") == "1":  # force the fakes even when a key is configured
         return False
     return bool(Settings().llm_key)
@@ -60,7 +60,7 @@ def hosted_mode() -> bool:
 def banner() -> str:
     line = "=" * 74
     if hosted_mode():
-        return f"{line}\n HOSTED MODE: NVIDIA embedder / reranker / LLM via the project's factories\n{line}"
+        return f"{line}\n HOSTED MODE: OpenAI embedder and LLM, local reranker, via the project's factories\n{line}"
     return f"{line}\n {OFFLINE_BANNER}\n{line}"
 
 
@@ -382,7 +382,7 @@ class Stack:
 
 
 def notebook_settings(**overrides: Any) -> Settings:
-    """Settings for the notebooks: .env is honoured (so NVIDIA_API_KEY is picked up), ASK is in test mode."""
+    """Settings for the notebooks: .env is honoured (so OPENAI_API_KEY is picked up), ASK is in test mode."""
     values: dict[str, Any] = {"app_env": "test", "log_level": "WARNING", "ocr_enabled": False}
     values.update(overrides)
     return Settings(**values)
@@ -391,7 +391,7 @@ def notebook_settings(**overrides: Any) -> Settings:
 def _lexical_fake_embedder() -> Any:
     """FakeEmbedder dense vectors + the project's LexicalSparseEncoder for the sparse half.
 
-    This mirrors how NvidiaEmbedder works (hosted dense, local lexical sparse), so the offline hybrid
+    This mirrors how OpenAIEmbedder works (hosted dense, local lexical sparse), so the offline hybrid
     search exercises the real sparse encoder, including Urdu-digit and diacritic normalisation.
     """
     from app.protocols import Embedding
@@ -412,7 +412,7 @@ def _lexical_fake_embedder() -> Any:
 
 
 def build_stack() -> Stack:
-    """Hosted NVIDIA stack when NVIDIA_API_KEY is set, otherwise the deterministic test fakes."""
+    """Hosted stack (OpenAI embedder and LLM, local reranker) when an LLM key is set, otherwise the deterministic test fakes."""
     settings = notebook_settings()
     if hosted_mode():
         from app.generation.llm import build_llm_clients
