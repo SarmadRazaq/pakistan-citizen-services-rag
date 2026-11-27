@@ -193,7 +193,7 @@ def test_dedupe_keeps_order_and_threshold() -> None:
     assert [p.point_id for p in out] == ["3", "2"]  # the private copy takes the public one's place
 
 
-async def test_rerank_uses_original_question_and_sets_gate_fields(
+async def test_rerank_uses_every_variant_and_sets_gate_fields(
     settings: Settings, corpus: InMemoryVectorStore, user_a: TenantContext
 ) -> None:
     reranker = RecordingReranker()
@@ -201,7 +201,7 @@ async def test_rerank_uses_original_question_and_sets_gate_fields(
     result = await retriever.retrieve(
         user_a, RetrievalQuery(variants=("urgent passport fee", "پاسپورٹ فیس"), candidates_k=5, context_k=2)
     )
-    assert reranker.queries == ["urgent passport fee"]
+    assert sorted(reranker.queries) == ["urgent passport fee", "پاسپورٹ فیس"]
     assert 1 <= len(result.candidates) <= 5
     assert [c.rank for c in result.candidates] == list(range(1, len(result.candidates) + 1))
     scores = [c.rerank_score or 0.0 for c in result.candidates]
@@ -210,6 +210,64 @@ async def test_rerank_uses_original_question_and_sets_gate_fields(
     assert result.candidates[0].point.payload.text == "urgent passport fee is 5000 rupees"
     assert set(result.latency_ms) >= {"embed", "search", "rerank"}
     assert all(isinstance(v, int) for v in result.latency_ms.values())
+
+
+async def test_roman_urdu_original_is_rescued_by_the_english_variant(
+    settings: Settings, store: InMemoryVectorStore, admin: TenantContext
+) -> None:
+    await _add(store, admin, PUBLIC, "d", ["new cnic fee schedule", "unrelated passport notes"])
+    ctx = TenantContext.for_user("u_x", Role.USER)
+    s = settings.model_copy(update={"tau_keep": 0.5})
+    roman, english = "naya shanakhti card kitni", "new cnic fee"
+    only_original = await HybridRetriever(s, FakeEmbedder(), store, FakeReranker()).retrieve(
+        ctx, RetrievalQuery(variants=(roman,))
+    )
+    assert only_original.max_rerank == 0.0  # the original alone scores nothing
+    result = await HybridRetriever(s, FakeEmbedder(), store, FakeReranker()).retrieve(
+        ctx, RetrievalQuery(variants=(roman, english))
+    )
+    best = result.candidates[0]
+    assert best.point.payload.text == "new cnic fee schedule"
+    assert best.rerank_score == pytest.approx(1.0)  # the English variant's score, not the original's
+    assert result.max_rerank == pytest.approx(1.0) and best.rerank_score >= s.tau_keep
+    assert [c.point.payload.text for c in result.context] == ["new cnic fee schedule"]
+    other = next(c for c in result.candidates if c.point.payload.text == "unrelated passport notes")
+    assert (other.rerank_score or 0.0) < s.tau_keep and not other.used_in_context
+
+
+async def test_single_variant_scores_match_a_direct_rerank(
+    settings: Settings, corpus: InMemoryVectorStore, user_a: TenantContext
+) -> None:
+    reranker = RecordingReranker()
+    result = await _retriever(settings, corpus, reranker).retrieve(
+        user_a, RetrievalQuery(variants=("urgent passport fee",), candidates_k=5)
+    )
+    assert reranker.queries == ["urgent passport fee"]
+    direct = await FakeReranker().rerank(
+        "urgent passport fee", [c.point.payload.text for c in result.candidates]
+    )
+    assert [c.rerank_score for c in result.candidates] == direct
+
+
+async def test_duplicate_and_empty_variants_are_not_reranked_twice(
+    settings: Settings, corpus: InMemoryVectorStore, user_a: TenantContext
+) -> None:
+    reranker = RecordingReranker()
+    await _retriever(settings, corpus, reranker).retrieve(
+        user_a,
+        RetrievalQuery(variants=("urgent passport fee", "  ", "urgent passport fee ", "", "passport fee")),
+    )
+    assert sorted(reranker.queries) == ["passport fee", "urgent passport fee"]
+
+
+async def test_rerank_is_capped_at_three_variants(
+    settings: Settings, corpus: InMemoryVectorStore, user_a: TenantContext
+) -> None:
+    reranker = RecordingReranker()
+    await _retriever(settings, corpus, reranker).retrieve(
+        user_a, RetrievalQuery(variants=("passport", "fee", "urgent", "cnic"))
+    )
+    assert len(reranker.queries) == 3
 
 
 async def test_context_selection_respects_tau_keep_and_context_k(

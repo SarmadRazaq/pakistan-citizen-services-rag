@@ -6,7 +6,9 @@
    cross-variant score; `similarity` and `sparse_score` are the best over the variants.
 3. Dedupe: identical `chunk_hash` collapses to one (the private copy wins, §5.8.4), then near-duplicate
    text (rapidfuzz ratio ≥ 95, a cheap stand-in for cosine > 0.95) is dropped below its better twin.
-4. Rerank the top `candidates_k` against the original question (`variants[0]`).
+4. Rerank the top `candidates_k` against every distinct query variant (at most 3, one concurrent
+   `rerank` call per variant over the same passages) and keep the **maximum** score per candidate, so a
+   Roman Urdu or Urdu-script question is also judged on its English rewrite.
 5. Context = the top `context_k` with `rerank_score ≥ tau_keep`, at least one; `max_rerank` drives the
    relevance gate in the ask pipeline.
 
@@ -44,6 +46,7 @@ from app.protocols import (
 log = structlog.get_logger(__name__)
 
 RRF_K = 60
+MAX_RERANK_VARIANTS = 3
 
 
 @dataclass
@@ -136,6 +139,16 @@ class HybridRetriever:
                 out.append(text)
         return out
 
+    async def _rerank_max(self, variants: list[str], passages: list[str]) -> list[float]:
+        """Max cross-encoder score per passage over the (at most 3) distinct variants."""
+        per_variant = await asyncio.gather(
+            *(self._reranker.rerank(v, passages) for v in variants[:MAX_RERANK_VARIANTS])
+        )
+        for scores in per_variant:
+            if len(scores) != len(passages):
+                raise RuntimeError("reranker returned a different number of scores than passages")
+        return [max(column) for column in zip(*per_variant, strict=True)]
+
     async def retrieve(self, ctx: TenantContext, query: RetrievalQuery) -> RetrievalResult:
         variants = self._variants(query)
         if not variants:
@@ -184,9 +197,7 @@ class HybridRetriever:
         do_rerank = overrides.rerank and self._settings.reranker_provider != "none"
         t = time.perf_counter()
         if do_rerank:
-            scores = await self._reranker.rerank(variants[0], [p.payload.text for p in top]) if top else []
-            if len(scores) != len(top):
-                raise RuntimeError("reranker returned a different number of scores than passages")
+            scores = await self._rerank_max(variants, [p.payload.text for p in top]) if top else []
             gate_scores = scores
             order = sorted(range(len(top)), key=lambda i: (-scores[i], i))
         else:
