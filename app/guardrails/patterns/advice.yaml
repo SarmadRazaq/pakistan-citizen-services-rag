@@ -1,0 +1,70 @@
+# GO-9 personal legal / tax / court advice (blueprint §7.2, E44), English, Urdu and Roman Urdu.
+#
+# `request` patterns run on the question. A hit (or the query-understanding `advice_request` flag)
+# makes the code append the "not advice" notice and a verified referral from referrals.yaml.
+# `directive` patterns run on the generated answer when the question is an advice request: a hit
+# means the model told the user what *they* should do in their case, which triggers one regeneration.
+
+version: 1
+request:
+  # ---------------------------------------------------------------- English
+  - id: en_what_should_i_do
+    lang: en
+    regex: >-
+      \bwhat\s+(?:should|shall|must)\s+i\s+do\b|\bwhat\s+are\s+my\s+options\b
+  - id: en_should_i_legal_action
+    lang: en
+    regex: >-
+      \bshould\s+i\s+(?:\w+\s+){0,2}?(?:file|sue|appeal|stop\s+paying|pay|go\s+to\s+court|settle|sign|accept|plead|challenge|hire|resign|withdraw|contest)\b
+  - id: en_my_case
+    lang: en
+    regex: >-
+      \bmy\s+(?:court\s+)?(?:case|lawsuit|hearing|appeal|tax\s+case|dispute|trial|fir|bail|divorce|custody)\b
+  - id: en_win_case
+    lang: en
+    regex: >-
+      \b(?:can|will|would)\s+i\s+win\b|\bdo\s+i\s+need\s+a\s+(?:lawyer|advocate)\b
+  - id: en_advise_me
+    lang: en
+    regex: >-
+      \badvise\s+me\b|\bwhat\s+(?:do|would)\s+you\s+(?:advise|recommend|suggest)\b|\blegal\s+advice\b
+  # ---------------------------------------------------------------- Urdu
+  - id: ur_kya_karun
+    lang: ur
+    regex: >-
+      (?:اب\s+)?(?:میں\s+)?کیا\s+کروں|مجھے\s+کیا\s+کرنا\s+چاہی[ےئ]
+  - id: ur_my_case
+    lang: ur
+    regex: >-
+      (?:میرا|میرے)\s+(?:کیس|مقدمہ|مقدمے|کیس\s+کی)|میری\s+(?:اپیل|پیشی|ضمانت)
+  - id: ur_lawyer
+    lang: ur
+    regex: >-
+      (?:وکیل|ایڈووکیٹ)\s+(?:کرنا|کروں|چاہی[ےئ]|کی\s+ضرورت)
+  # ---------------------------------------------------------------- Roman Urdu
+  - id: ru_kya_karun
+    lang: roman_ur
+    regex: >-
+      \b(?:ab\s+)?(?:main\s+|mein\s+|me\s+)?(?:kya|kia|kiya)\s+(?:karun|karoon|karu|karon|krun|kru)\b|\bmujhe\s+(?:kya|kia)\s+karna\s+(?:chahiye|chahye|chaiye)\b
+  - id: ru_my_case
+    lang: roman_ur
+    regex: >-
+      \b(?:mera|meray|mere)\s+(?:case|kes|muqadma|muqadmah)\b|\bmeri\s+(?:appeal|peshi|zamanat|bail)\b
+  - id: ru_lawyer
+    lang: roman_ur
+    regex: >-
+      \b(?:wakeel|wakil|vakeel|lawyer)\s+(?:karna|karun|karoon|chahiye|ki\s+zaroorat)\b
+
+directive:
+  - id: en_you_should
+    lang: en
+    regex: >-
+      \byou\s+(?:should|must|need\s+to|ought\s+to)\s+(?:definitely\s+|immediately\s+)?(?:file|sue|appeal|stop|pay|settle|sign|accept|plead|challenge|hire|withdraw|contest|refuse)\b
+  - id: ru_aap_ko_chahiye
+    lang: roman_ur
+    regex: >-
+      \b(?:aap|ap|tum)\s+(?:ko|ko\s+zaroor)\s+(?:\w+\s+){0,4}?(?:chahiye|chahye|chaiye)\b
+  - id: ur_aap_ko_chahiye
+    lang: ur
+    regex: >-
+      (?:آپ|تم)\s+کو\s+(?:\S+\s+){0,4}?چاہی[ےئ]

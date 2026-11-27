@@ -1,0 +1,14 @@
+schema_version: 2
+skills:
+  product-milestones:
+    status: active
+    last_changed_at: '2026-11-24'
+    last_changed_by: onboard
+  product-parking-lot:
+    status: active
+    last_changed_at: '2026-11-24'
+    last_changed_by: onboard
+  product-user-stories:
+    status: active
+    last_changed_at: '2026-11-24'
+    last_changed_by: onboard

@@ -1,0 +1,62 @@
+# Local / single-host stack. Start only the vector DB:   docker compose up -d qdrant
+# Start everything (API + web):  docker compose --profile api up -d --build
+#
+# Everything is bound to 127.0.0.1; a reverse proxy on the host terminates TLS in front (docs/DEPLOY.md).
+# Chat and embeddings are hosted (OpenAI API); only Tesseract OCR runs locally, and the image has no GPU
+# reranker, so RERANKER_PROVIDER defaults to none here. The API runs ONE process per
+# container: in-process document locks, ingestion jobs and rate limits assume it.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    ports:
+      - "127.0.0.1:6333:6333"   # bound to localhost only
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      # The image has no curl; open a TCP connection to the REST port instead.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      DATABASE_URL: sqlite+aiosqlite:////data/app.sqlite3
+      STORAGE_DIR: /data/storage
+      RERANKER_PROVIDER: ${RERANKER_PROVIDER:-none}  # no torch / GPU in this image
+    volumes:
+      - api_data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    profiles: ["api"]
+    build:
+      context: ./frontend
+    environment:
+      API_BASE_URL: http://api:8000
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:
+  api_data:

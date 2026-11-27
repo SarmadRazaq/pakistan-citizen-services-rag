@@ -1,0 +1,121 @@
+# GI-4 prompt-injection patterns (blueprint §7.1), English, Urdu (Arabic script) and Roman Urdu.
+#
+# Matching runs on the sanitised question after NFKC, lower-casing (unless case_sensitive),
+# whitespace collapsing and Urdu letter unification (ي→ی, ك→ک, ه→ہ). Write Urdu patterns with
+# either letter form; the same unification is applied to the regex source.
+#
+# Keep false positives low: every pattern needs an *instruction-override* shape, not just a
+# scary word. "What does the policy say about ignoring attendance rules?" must pass
+# (see tests/unit/test_guard_input.py, BENIGN list). Add a benign look-alike test for every new rule.
+
+version: 1
+code: prompt_injection_detected
+patterns:
+  # ---------------------------------------------------------------- English
+  - id: en_ignore_previous
+    lang: en
+    regex: >-
+      \b(?:ignore|disregard|forget|override|bypass|neglect|discard)\s+(?:all\s+|any\s+|every\s+)?(?:of\s+)?(?:the\s+|your\s+|my\s+|these\s+|those\s+)?(?:previous|prior|above|earlier|preceding|foregoing|initial|original|system|developer|safety)\s+(?:\w+\s+){0,2}?(?:instructions?|prompts?|directions?|guidelines?|commands?|context|programming|messages?|constraints?)\b
+  - id: en_ignore_previous_rules
+    lang: en
+    regex: >-
+      \b(?:ignore|disregard|forget|override|bypass|discard)\s+(?:all\s+)?(?:of\s+)?(?:the\s+)?(?:previous|prior|above|earlier|preceding|foregoing)\s+rules\b
+  - id: en_ignore_your_instructions
+    lang: en
+    regex: >-
+      \b(?:ignore|disregard|forget|override|bypass|discard)\s+(?:all\s+)?(?:of\s+)?(?:your|all|any|these)\s+(?:instructions?|prompts?|programming|guidelines|constraints|restrictions|filters)\b
+  - id: en_ignore_your_rules
+    lang: en
+    regex: >-
+      \b(?:ignore|disregard|forget|override|bypass|break)\s+(?:all\s+)?(?:of\s+)?your\s+(?:own\s+)?rules\b
+  - id: en_new_instructions
+    lang: en
+    regex: >-
+      \b(?:new|updated|real|actual|true)\s+(?:system\s+)?instructions?\s*:
+  - id: en_from_now_on
+    lang: en
+    regex: >-
+      \bfrom\s+now\s+on\s*,?\s+(?:you\s+(?:are|will|must|shall|should)|act|respond|answer|reply|ignore|only)\b
+  - id: en_system_prompt
+    lang: en
+    regex: >-
+      \b(?:system|developer|hidden|secret)\s+(?:prompt|instructions)\b|\b(?:initial|original)\s+prompt\b
+  - id: en_reveal_instructions
+    lang: en
+    regex: >-
+      \b(?:reveal|show|print|display|repeat|output|leak|dump|recite|tell\s+me|give\s+me|what\s+(?:is|are|were))\s+(?:me\s+)?(?:all\s+)?your\s+(?:\w+\s+)?(?:prompt|instructions|configuration|canary|guidelines\s+verbatim)\b
+  - id: en_repeat_above
+    lang: en
+    regex: >-
+      \b(?:repeat|print|output|copy)\s+(?:the\s+|all\s+)?(?:words|text|everything|lines?)\s+(?:above|before\s+this)\b
+  - id: en_canary
+    lang: en
+    regex: >-
+      \bcanary\s+(?:token|word|string)\b
+
+  # ---------------------------------------------------------------- fake role tags / delimiters
+  - id: tag_chatml
+    lang: any
+    regex: >-
+      <\|\s*(?:im_start|im_end|system|user|assistant|endoftext|eot_id|start_header_id|end_header_id)\s*\|>
+  - id: tag_inst
+    lang: any
+    case_sensitive: true
+    regex: >-
+      \[/?INST\]|<</?SYS>>
+  - id: tag_markdown_role
+    lang: any
+    regex: >-
+      (?:^|\n)\s*#{2,}\s*(?:system|assistant|instructions?|developer)\b
+  - id: tag_line_role
+    lang: any
+    regex: >-
+      (?:^|\n)\s*(?:system|assistant|developer)\s*:\s*\S
+  - id: tag_xml_role
+    lang: any
+    regex: >-
+      </?\s*(?:system|source|instructions?|assistant|sources)\s*(?:id\s*=|>)
+
+  # ---------------------------------------------------------------- Urdu (Arabic script)
+  - id: ur_ignore_previous
+    lang: ur
+    regex: >-
+      (?:پچھلی|پچھلے|سابقہ|سابقہ|پہلے\s+والی|پہلی|پرانی|تمام|ساری|سب|اوپر\s+والی|اوپر\s+دی\s+گئی|اپنی|سسٹم\s+کی)\s+(?:\S+\s+){0,2}?(?:ہدایات|ہدایت|ہدایتوں|ہدایتیں|احکامات|احکام|انسٹرکشنز|انسٹرکشن|ہدایت\s+نامہ)\s+(?:\S+\s+){0,2}?(?:نظر\s*انداز|بھول|فراموش|چھوڑ|ترک|مت\s+مانو|نہ\s+مانو)
+  - id: ur_ignore_previous_reversed
+    lang: ur
+    regex: >-
+      (?:نظر\s*انداز|بھول|فراموش)\s+(?:\S+\s+){0,2}?(?:پچھلی|پچھلے|سابقہ|پہلے\s+والی|تمام|ساری|اپنی)\s+(?:\S+\s+){0,1}?(?:ہدایات|ہدایت|ہدایتوں|احکامات|انسٹرکشنز)
+  - id: ur_system_prompt
+    lang: ur
+    regex: >-
+      (?:سسٹم|سِسٹم)\s*(?:پرامپٹ|پرومپٹ|میسج|ہدایات)
+  - id: ur_reveal_instructions
+    lang: ur
+    regex: >-
+      (?:اپنی|اپنے|تمہاری|تمہارے|آپ\s+کی)\s+(?:خفیہ\s+)?(?:ہدایات|انسٹرکشنز|پرامپٹ|پرومپٹ)\s+(?:\S+\s+){0,2}?(?:بتاؤ|بتاو|بتائیں|بتایئے|دکھاؤ|دکھاو|دکھائیں|ظاہر\s+کرو|لکھو|دہراؤ)
+  - id: ur_new_instructions
+    lang: ur
+    regex: >-
+      (?:نئی|اصل)\s+ہدایات\s*[:：]
+
+  # ---------------------------------------------------------------- Roman Urdu
+  - id: ru_ignore_previous
+    lang: roman_ur
+    regex: >-
+      \b(?:pichli|pichhli|pichle|pichhle|pehli|pehle\s+wali|pehle\s+ki|purani|saari|sari|sabhi|tamam|tamaam|apni|apne|upar\s+wali|uper\s+wali|system\s+ki)\s+(?:\w+\s+){0,2}?(?:instructions?|hidayat|hidayaat|hidaayat|hidayaten|ahkamaat|ahkamat|commands?|prompts?)\s+(?:ko\s+)?(?:\w+\s+)?(?:ignore|bhool|bhul|nazar\s*andaz|nazarandaz|chhor|chor|skip|bypass|mat\s+mano|na\s+mano)
+  - id: ru_ignore_previous_reversed
+    lang: roman_ur
+    regex: >-
+      \b(?:ignore|bhool|bhul|nazar\s*andaz|nazarandaz)\s+(?:kar\w*\s+|ja\w*\s+|do\s+)?(?:pichli|pichhli|pichle|pehle\s+wali|purani|saari|sari|tamam|tamaam|apni)\s+(?:\w+\s+)?(?:instructions?|hidayat|hidayaat|ahkamaat|commands?|prompts?)\b
+  - id: ru_reveal_instructions
+    lang: roman_ur
+    regex: >-
+      \b(?:apni|apne|tumhari|tumhare|tumhary|aapki|aap\s+ki|apki)\s+(?:secret\s+|khufia\s+|system\s+)?(?:instructions?|hidayat|hidayaat|prompt)\s+(?:\w+\s+)?(?:batao|bataen|batain|bataiye|bataein|dikhao|dikhaen|dikhayen|likho|share\s+karo|repeat\s+karo)\b
+  - id: ru_system_prompt_batao
+    lang: roman_ur
+    regex: >-
+      \bsystem\s+(?:ka\s+|ki\s+)?prompt\b
+
+  # ---------------------------------------------------------------- encodings
+  # base64 / rot13 payloads are decoded in code (input_guards._decoded_variants) and the decoded
+  # text is matched against every pattern in this file and in jailbreak.yaml.

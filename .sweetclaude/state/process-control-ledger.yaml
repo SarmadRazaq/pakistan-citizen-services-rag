@@ -1,0 +1,20 @@
+workflow: code-issue
+story_id: HOSTED-MODELS
+github_issue: null
+current_step: complete
+rigor: small
+success_criteria_contract: null
+subagent_budget:
+  approved_by: SarmadRazaq
+  approved_at: '2026-11-24'
+  max_caucus_rounds: 0
+  max_reviewer_agents: 0
+  max_implementation_agents: 4   # hosted models: test-writer + implementer; hardening: test-writer + implementer
+caucus_rounds_used: 0
+reviewer_agents_used: 0
+implementation_agents_used: 2
+blocking_caucus_failures: 0
+process_failures: 0
+adversarial_bypass_count: 0
+human_approvals: []
+stop_disposition: null

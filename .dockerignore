@@ -1,0 +1,16 @@
+.venv
+**/node_modules
+.git
+.env
+.env.*
+!.env.example
+data
+storage
+corpus/raw
+evals/.cache
+.sweetclaude/cache
+frontend
+**/__pycache__
+**/.pytest_cache
+.mypy_cache
+.ruff_cache

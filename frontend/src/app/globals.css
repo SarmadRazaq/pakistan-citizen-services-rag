@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Every text/background pair used by the components meets WCAG AA (4.5:1) in
+ * both themes: `muted` text is checked against `surface` and `bg`, the status colours against
+ * `surface` and against their own 12% tints.
+ */
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #eef1f6;
+  --fg: #0f172a;
+  --muted: #475569;
+  --border: #cbd5e1;
+  --accent: #1d4ed8;
+  --accent-fg: #ffffff;
+  --ok: #166534;
+  --warn: #8a4b00;
+  --bad: #b91c1c;
+  --official: #0f5132;
+  --mine: #6b21a8;
+  --info: #1e40af;
+  --mark: #fde68a;
+  --mark-fg: #1f2937;
+  --focus: #2563eb;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #111a2e;
+    --surface-2: #1a2540;
+    --fg: #e5eaf2;
+    --muted: #a3b0c2;
+    --border: #334155;
+    --accent: #7cb2ff;
+    --accent-fg: #0b1220;
+    --ok: #6ee7a0;
+    --warn: #fbbf5a;
+    --bad: #fca5a5;
+    --official: #6ee7b7;
+    --mine: #d8b4fe;
+    --info: #93c5fd;
+    --mark: #854d0e;
+    --mark-fg: #fef9c3;
+    --focus: #93c5fd;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-official: var(--official);
+  --color-mine: var(--mine);
+  --color-info: var(--info);
+  --color-mark: var(--mark);
+  --color-mark-fg: var(--mark-fg);
+  --font-urdu: var(--font-nastaliq), "Noto Nastaliq Urdu", "Jameel Noori Nastaleeq", serif;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Visible keyboard focus everywhere (mouse clicks do not show it). */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/*
+ * Urdu text: Nastaliq needs a taller line box, or the stacked ligatures clip. Applied to any
+ * element marked lang="ur" (answers, chunks, chips) and to the `.urdu` utility.
+ */
+:lang(ur),
+.urdu {
+  font-family: var(--font-urdu);
+  line-height: 2.2;
+}
+
+/* Short Urdu labels inside compact controls (chips, badges): Nastaliq's tall ascenders do not fit
+   a one-line chip, so keep the UI font (which has Arabic-script glyphs) there. */
+.ui-ur:lang(ur) {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+mark {
+  background: var(--mark);
+  color: var(--mark-fg);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+dialog::backdrop {
+  background: rgb(2 6 23 / 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,16 @@
+# G2: generator comparison (blueprint §10.6, G1-G3). Same retrieval as the baseline, a different
+# generation model, sent in the X-Eval-Config header (generation_model). Honoured when
+# EVAL_OVERRIDES_ENABLED=true and the eval account is an admin; the id must be in GENERATION_MODELS and the
+# generate call then uses only that model. Not in the default run: name it with --configs. Check the id
+# first with scripts/check_models.py.
+name: G2_gpt4o_mini_generator
+description: "Baseline retrieval, generator = gpt-4o-mini (baseline: gpt-4.1-mini)"
+kind: service
+default: false
+request:
+  top_k: 5
+  search_top_k: 20
+  answer_language: auto
+  scope: public
+overrides:
+  generation_model: gpt-4o-mini

@@ -1,0 +1,90 @@
+schema_version: 2
+project:
+  name: Citizen Services RAG
+  type: existing-code
+  version_stage: ALPHA
+  mode: flow
+  issue_tracker: github
+  safety_snapshot: ''
+framework:
+  installed_version: 5.1.2
+  setup_complete: true
+  migrated_at: null
+  migrated_from: null
+  migration_status: null
+  hook_last_ran: '2026-11-24T16:53:27+00:00'
+  consistency:
+    last_checked: '2026-11-24T16:53:27+00:00'
+    status: drift_detected
+    drift:
+    - hooks.json_missing
+    check_error: null
+  update:
+    available: null
+    last_checked: '2026-11-24T16:53:27+00:00'
+    declined: null
+    check_error: null
+session:
+  deference_level: collaborative
+  default_action: null
+work:
+  last_item_id: null
+  active:
+    id: null
+    type: null
+    workflow: []
+    phase: null
+    title: null
+    started: null
+    entry_category: null
+features:
+  product_milestones:
+    status: active
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+  product_backlog:
+    status: active
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+  product_personas:
+    status: declined
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+  product_stories:
+    status: active
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+  document_corpus:
+    status: declined
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+  usage_tracking:
+    status: active
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+  behavioral_regression:
+    status: not_offered
+    offered_at: null
+    decided_at: null
+    defer_until: null
+  work_item_artifacts:
+    status: declined
+    offered_at: null
+    decided_at: '2026-11-24T16:57:52+00:00'
+    defer_until: null
+health:
+  last_checked: null
+  artifacts:
+    milestones: not_configured
+    backlog: not_configured
+    personas: not_configured
+    stories: not_configured
+    corpus: not_configured
+work_history: []
+learnings: []

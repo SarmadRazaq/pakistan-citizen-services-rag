@@ -58,5 +58,15 @@ Thumbs.db
 .vscode/
 .idea/
 
-# --- Claude Code local settings ---
-.claude/settings.local.json
+# --- Claude Code local state (settings, agent worktrees) ---
+.claude/
+
+# SweetClaude recovery snapshots and manifests
+.sweetclaude/state/recovery-runs/
+.sweetclaude/cache/
+.sweetclaude/state/session-state.yaml
+.sweetclaude/state/session-status.txt
+
+# written by scripts/check_models.py; depends on the API key in use
+evals/configs/models_available.json
+*.stackdump

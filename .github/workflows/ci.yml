@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "feature/**", "docs/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          uv venv
+          uv pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Requirements are fully pinned
+        run: |
+          # Re-resolve while preferring the committed pins: this only differs when requirements.in
+          # changed without re-pinning, not whenever an upstream package publishes a new release.
+          cp requirements.txt /tmp/req.txt
+          uv pip compile --universal requirements.in -o /tmp/req.txt -q
+          diff <(grep -E '^[a-zA-Z]' requirements.txt | sort) <(grep -E '^[a-zA-Z]' /tmp/req.txt | sort) \
+            || (echo "requirements.txt is stale: run 'uv pip compile --universal requirements.in -o requirements.txt'" && exit 1)
+
+      - name: Tenant isolation guard (qdrant_client only in vector_store.py)
+        run: |
+          offenders=$(grep -rlE '^\s*(import|from) qdrant_client' app --include='*.py' | grep -v '^app/retrieval/vector_store.py$' || true)
+          if [ -n "$offenders" ]; then echo "qdrant_client imported outside vector_store.py:"; echo "$offenders"; exit 1; fi
+
+      - name: Lint
+        run: .venv/bin/python -m ruff check app tests scripts evals && .venv/bin/python -m ruff format --check app tests scripts evals
+
+      - name: Types
+        run: .venv/bin/python -m mypy
+
+      - name: Tests
+        run: .venv/bin/python -m pytest -m "not live" --cov --cov-report=term --junitxml=junit.xml
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # gitleaks-action lists the PR's commits through the API on pull_request events,
+    # which needs pull-requests: read on top of the workflow-wide contents: read.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

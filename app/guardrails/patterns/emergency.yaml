@@ -1,0 +1,86 @@
+# GO-11 emergency Notice: a question that describes someone in danger now (violence, a missing or
+# kidnapped person, a threat to life, a medical emergency, fire or a serious accident, self-harm),
+# in English, Urdu and Roman Urdu. A hit makes the code add the emergency Notice (and the verified
+# emergency Referrals) to whatever outcome the question gets.
+#
+# Routine service questions must not match: "emergency passport", "urgent CNIC fee", "my CNIC is
+# missing", "lost passport", "complaint against a police officer". Missing-person patterns therefore
+# name a person (child, husband, sister...), never a document.
+
+version: 1
+patterns:
+  # ---------------------------------------------------------------- English
+  - id: en_violence
+    lang: en
+    regex: >-
+      \b(?:is|are|was|were|keeps?)\s+(?:\w+\s+){0,2}?(?:beating|hitting|abusing|attacking|torturing|stabbing|strangling|choking|raping|assaulting|burning)\s+(?:me|my|us|him|her|them)\b|\b(?:beat|hit|stabbed|attacked|assaulted|raped)\s+(?:me|my\s+\w+)\b|\bdomestic\s+violence\b
+  - id: en_missing_person
+    lang: en
+    regex: >-
+      \b(?:my|our)\s+(?:\w+\s+){0,2}?(?:child|children|kid|baby|son|daughter|husband|wife|brother|sister|father|mother|friend|relative|cousin|nephew|niece)\s+(?:is|are|has|have|was|got|went|has\s+been|have\s+been)\s+(?:\w+\s+){0,2}?(?:missing|kidnapped|abducted|disappeared)\b|\b(?:kidnapped|abducted)\s+(?:my|our)\s+\w+
+  - id: en_threat_to_life
+    lang: en
+    regex: >-
+      \b(?:threatening|threatened|trying|wants?|going)\s+(?:to\s+)?(?:kill|murder|shoot|stab)\s+(?:me|us|my|him|her|them)\b|\bdeath\s+threats?\b|\bin\s+danger\b|\b(?:my|our)\s+life\s+is\s+in\s+danger\b
+  - id: en_medical
+    lang: en
+    regex: >-
+      \b(?:heart\s+attack|stroke|seizure)\b.*\b(?:my|he|she|someone|father|mother|child)\b|\b(?:my|our)\s+\w+\s+(?:had|has\s+had|is\s+having|suffered)\s+(?:a\s+)?(?:heart\s+attack|stroke|seizure)\b|\b(?:had|having|got)\s+a\s+heart\s+attack\b|\bunconscious\b|\bbleeding\s+(?:heavily|badly|a\s+lot|profusely)\b|\boverdos(?:e|ed|ing)\b|\b(?:not|stopped)\s+breathing\b
+  - id: en_fire_accident
+    lang: en
+    regex: >-
+      \b(?:on|caught)\s+fire\b|\b(?:serious|major|bad|road|car)\s+accident\b|\bmet\s+with\s+an?\s+accident\b
+  - id: en_self_harm
+    lang: en
+    regex: >-
+      \bsuicid(?:e|al)\b|\bself[\s-]*harm\b|\b(?:kill|hurt|harm)\s+myself\b|\bend\s+my\s+(?:own\s+)?life\b
+  # ---------------------------------------------------------------- Urdu
+  - id: ur_violence
+    lang: ur
+    regex: >-
+      (?:مجھے|ہمیں|مجھ\s+پر)\s+(?:\S+\s+){0,3}?(?:مار\s+رہ|پیٹ\s+رہ|مارتا|مارتی|مارتے|پیٹتا|پیٹتی|پیٹتے|تشدد)|گھریلو\s+تشدد
+  - id: ur_missing_person
+    lang: ur
+    regex: >-
+      (?:بچہ|بچی|بچے|بچوں|بیٹا|بیٹی|بیٹے|شوہر|خاوند|بیوی|بھائی|بہن|والد|والدہ|ابو|امی|باپ|ماں|بھتیجا|بھانجا|دوست)\s+(?:\S+\s+){0,2}?(?:لاپتہ|لاپتا|گم|اغوا|اغواء|غائب)|(?:کو|نے)\s+اغوا\s+کر
+  - id: ur_threat_to_life
+    lang: ur
+    regex: >-
+      جان\s+سے\s+(?:مار|ہاتھ)|جان\s+کو\s+خطرہ|قتل\s+کی\s+دھمکی
+  - id: ur_medical
+    lang: ur
+    regex: >-
+      دل\s+کا\s+دورہ|بے\s*ہوش|زہر\s+کھا|خون\s+بہ\s+رہا|سانس\s+نہیں\s+لے|اوور\s*ڈوز
+  - id: ur_fire_accident
+    lang: ur
+    regex: >-
+      آگ\s+لگ|شدید\s+حادثہ|ایکسیڈنٹ\s+ہو\s+گیا|حادثہ\s+پیش\s+آیا
+  - id: ur_self_harm
+    lang: ur
+    regex: >-
+      خود\s*کشی|خود\s+کو\s+(?:مار|ختم|نقصان)|اپنی\s+جان\s+(?:لینا|دینا|ختم)
+  # ---------------------------------------------------------------- Roman Urdu
+  - id: ru_violence
+    lang: roman_ur
+    regex: >-
+      \b(?:mujhe|mujhay|mujh\s+par|hamein|humein)\s+(?:\w+\s+){0,3}?(?:maar|peet|mar|torture)\s*(?:raha|rahi|rahe|rahay|dala|diya|deta|deti|ta|ti)\b|\bghareloo\s+tashadud\b|\bgharelu\s+tashadud\b
+  - id: ru_missing_person
+    lang: roman_ur
+    regex: >-
+      \b(?:beta|beti|bacha|bachi|bachay|bachon|shohar|khawand|biwi|bhai|behan|bahen|walid|walida|abu|ammi|baap|maa|dost)\s+(?:\w+\s+){0,2}?(?:gum|gumshuda|laapata|lapata|ghaib|agwa|agha|aghwa)\b|\b(?:agwa|aghwa|kidnap)\s+(?:kar|ho)\b
+  - id: ru_threat_to_life
+    lang: roman_ur
+    regex: >-
+      \bjaan\s+se\s+(?:maar|mar)|\bjaan\s+(?:ko|ka)\s+khatra\b|\bqatl\s+ki\s+dhamki\b
+  - id: ru_medical
+    lang: roman_ur
+    regex: >-
+      \bdil\s+ka\s+daura\b|\bbe\s*hosh\b|\bzeher\s+kha\b|\bkhoon\s+beh\b|\bsans\s+nahi\s+le\b|\bsaans\s+nahi\s+le\b
+  - id: ru_fire_accident
+    lang: roman_ur
+    regex: >-
+      \baag\s+lag\b|\bshadeed\s+hadsa\b|\baccident\s+ho\s+gaya\b|\bhadsa\s+pesh\b
+  - id: ru_self_harm
+    lang: roman_ur
+    regex: >-
+      \bkhud\s*kushi\b|\bkhud\s*kashi\b|\bkhud\s+ko\s+(?:maar|khatam)|\bapni\s+jaan\s+(?:lena|dena|khatam)
