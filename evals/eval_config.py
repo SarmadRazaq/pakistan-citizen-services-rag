@@ -9,7 +9,7 @@ A config sets what the harness can vary **through the public API**:
   pipeline, and the report flags the config as not honoured.
 
 `kind: closed_book` is the contamination baseline: the harness asks the generator model directly via
-the NVIDIA API with **no sources**, and the judge scores it like any other answer.
+the hosted LLM API with **no sources**, and the judge scores it like any other answer.
 """
 
 from __future__ import annotations

@@ -19,7 +19,7 @@ log = structlog.get_logger(__name__)
 @dataclass(frozen=True, slots=True)
 class DeviceInfo:
     device: str  # "cuda:0" or "cpu"
-    name: str | None = None  # GPU name, e.g. "NVIDIA GeForce RTX 3050 Laptop GPU"
+    name: str | None = None  # GPU name, e.g. "GeForce RTX 3050 Laptop GPU"
     vram_total_mb: int | None = None
     vram_free_mb: int | None = None
     torch_available: bool = False

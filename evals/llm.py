@@ -1,10 +1,10 @@
-"""A minimal NVIDIA (OpenAI-compatible) `/chat/completions` client for the eval: judge and closed-book.
+"""A minimal OpenAI-compatible `/chat/completions` client for the eval: judge and closed-book.
 
 - Calls the API directly with httpx (no service code), key and base URL from `Settings`.
 - **Disk cache** keyed by sha256(model, prompt): one JSON file per call. Re-runs are free and the
   published numbers re-run offline. `use_cache=False` (`--no-cache`) skips reads but still writes.
 - **Offline mode** never touches the network: a cache miss raises `CacheMissError`.
-- **Client-side rate limit** (≤ 35 requests/minute, under the ~40 rpm free tier).
+- **Client-side rate limit** (`LLM_MAX_RPM` requests/minute).
 - Retries 429/5xx with backoff, honouring `Retry-After`; JSON mode falls back to plain prompting when
   a model rejects `response_format`.
 """
@@ -24,7 +24,6 @@ import httpx
 
 from app.config import Settings
 
-MAX_RPM = 35  # ceiling on the NVIDIA free tier only
 Message = dict[str, str]
 Sleep = Callable[[float], Awaitable[None]]
 
@@ -38,7 +37,7 @@ class CacheMissError(LLMError):
 
 
 class MissingKeyError(LLMError):
-    """No LLM key (LLM_API_KEY / NVIDIA_API_KEY / OPENAI_API_KEY) in the environment / .env."""
+    """No LLM key (LLM_API_KEY / OPENAI_API_KEY) in the environment / .env."""
 
 
 class RateLimiter:
@@ -100,8 +99,6 @@ class ChatClient:
         self.max_attempts = max_attempts
         self._sleep = sleep
         rpm = max_rpm or settings.llm_max_rpm
-        if settings.llm_is_nvidia:
-            rpm = min(MAX_RPM, rpm)  # the NVIDIA free tier allows ~40 requests/minute; OpenAI tiers differ
         # Share one limiter between clients that use the same key (judge + closed-book).
         self.limiter = limiter or RateLimiter(rpm, clock=clock, sleep=sleep)
         self._transport = transport
@@ -124,11 +121,9 @@ class ChatClient:
         if self._client is None:
             key = self.settings.llm_key
             if not key:
-                raise MissingKeyError(
-                    "LLM_API_KEY (or NVIDIA_API_KEY / OPENAI_API_KEY) is not set (add it to .env)"
-                )
+                raise MissingKeyError("LLM_API_KEY (or OPENAI_API_KEY) is not set (add it to .env)")
             self._client = httpx.AsyncClient(
-                base_url=self.settings.nvidia_base_url.rstrip("/"),
+                base_url=self.settings.llm_base_url.rstrip("/"),
                 headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
                 timeout=self._timeout,
                 transport=self._transport,

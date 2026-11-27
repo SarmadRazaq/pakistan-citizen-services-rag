@@ -243,7 +243,7 @@ class RagAskService:
             for r in state.get("llm_calls", [])
         ]
         if q and any(q.usage):
-            calls.insert(0, ModelUsage(self.settings.helper_model, "nvidia", q.usage[0], q.usage[1]))
+            calls.insert(0, ModelUsage(self.settings.helper_model, "hosted", q.usage[0], q.usage[1]))
         return calls
 
     # ------------------------------------------------------------ ask

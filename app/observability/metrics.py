@@ -11,7 +11,7 @@ Definitions:
   unavailable"). 4xx are caller mistakes (validation, auth, rate limit) and are not errors here.
 - fallback_rate: share of /ask completions answered in degraded mode (local fallback model).
 - avg tokens, cost and list price per question: over completed /ask requests (status 200), refusals
-  included because they still spent tokens. cost = actual spend (0 on the NVIDIA free tier);
+  included because they still spent tokens. cost = actual spend (0 when LLM_BILLED=false);
   list price = tokens x configured model prices ("what it would cost").
 - provider_mix (admins only): completed requests per `llm_model`.
 """

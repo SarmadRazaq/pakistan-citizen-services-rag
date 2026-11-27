@@ -1,4 +1,4 @@
-"""`LLMRouter`: the NVIDIA API catalog model chain, optional Ollama fallback (blueprint §3.7, §12.2, E14/E15).
+"""`LLMRouter`: the hosted (OpenAI) model chain, optional Ollama fallback (blueprint §3.7, §12.2, E14/E15).
 
 Transport choice: the router calls the OpenAI-compatible `POST /chat/completions` directly with
 `httpx.AsyncClient` instead of going through LangChain's `ChatOpenAI`. Raw httpx gives exact control
@@ -54,7 +54,7 @@ from app.protocols import LLMMessage, LLMResult
 log = structlog.get_logger(__name__)
 
 Purpose = Literal["generate", "helper", "judge"]
-Endpoint = Literal["nvidia", "ollama"]
+Endpoint = Literal["hosted", "ollama"]
 
 # Module-level defaults (not in Settings; see the work-package report).
 MAX_RETRIES = 2  # 429/5xx retries on the same model
@@ -123,7 +123,7 @@ class LLMRouter:
     Chains per purpose: `generate` = GENERATION_MODELS; `helper` = HELPER_MODEL + GENERATION_MODELS;
     `judge` = JUDGE_MODEL. `generate` and `helper` then fall back to Ollama (`degraded=True`) only when
     `LOCAL_FALLBACK_ENABLED`. With no
-    NVIDIA_API_KEY the hosted models are skipped. `local_only=True` builds a router that uses only
+    LLM_API_KEY the hosted models are skipped. `local_only=True` builds a router that uses only
     Ollama (for `PRIVATE_CONTEXT_POLICY=local_only` answers over private chunks).
 
     Disk response cache (eval only): enabled only when the router is constructed with `cache=True`
@@ -187,7 +187,7 @@ class LLMRouter:
             hosted = _dedupe(names)
             if model and purpose == "generate":
                 hosted = [model]
-        targets = [_Target("nvidia", m) for m in hosted]
+        targets = [_Target("hosted", m) for m in hosted]
         if purpose != "judge" and self._settings.local_fallback_enabled:
             targets.append(local)
         return targets
@@ -195,7 +195,7 @@ class LLMRouter:
     def breaker_state(self, endpoint: Endpoint, model: str) -> str:
         return self._breaker(_Target(endpoint, model)).state
 
-    def json_mode_disabled(self, model: str, endpoint: Endpoint = "nvidia") -> bool:
+    def json_mode_disabled(self, model: str, endpoint: Endpoint = "hosted") -> bool:
         return _Target(endpoint, model).key in self._no_json_mode
 
     async def complete(
@@ -223,7 +223,7 @@ class LLMRouter:
         bad_key = False
 
         for target in chain:
-            hosted = target.endpoint == "nvidia"
+            hosted = target.endpoint == "hosted"
             if hosted and bad_key:
                 continue
             remaining = deadline - self._clock()
@@ -301,7 +301,7 @@ class LLMRouter:
         else:
             if not self._api_key:
                 return []
-            url, headers = f"{self._base(_Target('nvidia', ''))}/models", self._headers(hosted=True)
+            url, headers = f"{self._base(_Target('hosted', ''))}/models", self._headers(hosted=True)
         try:
             response = await self._client.get(
                 url,
@@ -334,9 +334,7 @@ class LLMRouter:
         return breaker
 
     def _base(self, target: _Target) -> str:
-        base = (
-            self._settings.nvidia_base_url if target.endpoint == "nvidia" else self._settings.ollama_base_url
-        )
+        base = self._settings.llm_base_url if target.endpoint == "hosted" else self._settings.ollama_base_url
         return base.rstrip("/")
 
     def _headers(self, *, hosted: bool) -> dict[str, str]:
@@ -355,7 +353,7 @@ class LLMRouter:
         attempt_timeout_s: float,
         deadline: float | None,
     ) -> _Completion:
-        hosted = target.endpoint == "nvidia"
+        hosted = target.endpoint == "hosted"
         url = f"{self._base(target)}/chat/completions"
         headers = self._headers(hosted=hosted)
         json_mode = self._settings.llm_json_mode and target.key not in self._no_json_mode
@@ -485,7 +483,7 @@ def build_llm_clients(
 ) -> tuple[LLMRouter, LLMRouter]:
     """Return (hosted, local_only).
 
-    `hosted` is the full NVIDIA chain (→ Ollama when LOCAL_FALLBACK_ENABLED). `local_only` uses only
+    `hosted` is the full hosted chain (→ Ollama when LOCAL_FALLBACK_ENABLED). `local_only` uses only
     Ollama; the ask pipeline uses it when `PRIVATE_CONTEXT_POLICY=local_only` and private chunks are in
     the context. The serving app passes `eval_cache=False` (the default); only the eval runner may pass True.
     """

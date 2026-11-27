@@ -36,7 +36,6 @@ async def _wire_runtime(app: FastAPI, settings: Settings, db: Database) -> list[
     """
     from app.generation.llm import build_llm_clients
     from app.generation.service import build_ask_service
-    from app.guardrails.input_guards import build_injection_classifier
     from app.retrieval.factory import build_retrieval
 
     closables: list[object] = []
@@ -52,12 +51,7 @@ async def _wire_runtime(app: FastAPI, settings: Settings, db: Database) -> list[
     closables.extend([hosted, local])
     app.state.llm, app.state.llm_local = hosted, local
 
-    classifier = build_injection_classifier(settings)
-    if classifier is not None:
-        closables.append(classifier)
-    app.state.ask = build_ask_service(
-        settings, db, retrieval.retriever, llm_hosted=hosted, llm_local=local, classifier=classifier
-    )
+    app.state.ask = build_ask_service(settings, db, retrieval.retriever, llm_hosted=hosted, llm_local=local)
 
     from app.ingestion.service import IngestionService
 

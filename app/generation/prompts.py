@@ -290,11 +290,11 @@ MESSAGES: dict[str, dict[LanguageCode, str]] = {
         "ke liye official website dekhein.",
     },
     "third_party_processing": {
-        _EN: "Parts of your private uploads were sent to the hosted model provider (NVIDIA API) to "
+        _EN: "Parts of your private uploads were sent to the hosted model provider (OpenAI API) to "
         "generate this answer.",
         _UR: "اس جواب کی تیاری کے لیے آپ کی نجی دستاویزات کے کچھ حصے "
-        "ہوسٹڈ ماڈل فراہم کنندہ (NVIDIA API) کو بھیجے گئے۔",
-        _RU: "Is jawab ke liye aap ke private uploads ke kuch hisse hosted model provider (NVIDIA API) "
+        "ہوسٹڈ ماڈل فراہم کنندہ (OpenAI API) کو بھیجے گئے۔",
+        _RU: "Is jawab ke liye aap ke private uploads ke kuch hisse hosted model provider (OpenAI API) "
         "ko bheje gaye.",
     },
     "question_empty": {
