@@ -191,8 +191,8 @@ def test_sources_are_rendered_with_attributes_and_cannot_break_out() -> None:
 
 
 def test_secret_redaction() -> None:
-    text, changed = redact_secrets("key nvapi-abcdefghijklmnopqrstuvwxyz and API_KEY=supersecret123 ok")
-    assert changed and "nvapi-" not in text and "supersecret123" not in text
+    text, changed = redact_secrets("key sk-abcdefghijklmnopqrstuvwxyz and API_KEY=supersecret123 ok")
+    assert changed and "sk-abcdef" not in text and "supersecret123" not in text
     assert redact_secrets("Fee is Rs 9,000.") == ("Fee is Rs 9,000.", False)
 
 

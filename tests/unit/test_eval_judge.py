@@ -14,11 +14,11 @@ from evals.llm import CacheMissError, ChatClient, MissingKeyError, RateLimiter, 
 
 from app.config import Settings
 
-JUDGE_MODEL = "openai/gpt-oss-120b"
+JUDGE_MODEL = "gpt-4o"
 
 
 def _settings(**over: Any) -> Settings:
-    return Settings(_env_file=None, nvidia_api_key="nvapi-test", **over)  # type: ignore[call-arg]
+    return Settings(_env_file=None, llm_api_key="sk-test", **over)  # type: ignore[call-arg]
 
 
 def _item() -> GoldenItem:
@@ -145,7 +145,7 @@ def test_prompt_carries_rubric_and_context() -> None:
 # ---------------------------------------------------------------- client: cache, offline, limits
 
 
-async def test_judge_calls_nvidia_then_uses_disk_cache(tmp_path: Path) -> None:
+async def test_judge_calls_the_llm_then_uses_disk_cache(tmp_path: Path) -> None:
     rec = Recorder(['{"correctness": 1, "citation_support": "no", "rationale": "half"}'])
     inp = JudgeInput(item=_item(), answer="x", refused=False)
     async with _client(tmp_path, rec) as client:
@@ -156,7 +156,7 @@ async def test_judge_calls_nvidia_then_uses_disk_cache(tmp_path: Path) -> None:
     assert second.correctness == 1 and second.cached
     assert len(rec.requests) == 1  # the second verdict came from evals/.cache/judge
     req = rec.requests[0]
-    assert req["auth"] == "Bearer nvapi-test"
+    assert req["auth"] == "Bearer sk-test"
     assert req["url"].endswith("/v1/chat/completions")
     assert req["body"]["model"] == JUDGE_MODEL and req["body"]["temperature"] == 0
     assert req["body"]["response_format"] == {"type": "json_object"}
@@ -194,7 +194,7 @@ async def test_missing_key_is_reported(tmp_path: Path) -> None:
     verdict, error = await Judge(client, JUDGE_MODEL).try_judge(
         JudgeInput(item=_item(), answer="x", refused=False)
     )
-    assert verdict is None and error and "NVIDIA_API_KEY" in error
+    assert verdict is None and error and "LLM_API_KEY" in error
 
 
 async def test_retries_429_and_drops_json_mode_when_rejected(tmp_path: Path) -> None:
@@ -220,6 +220,6 @@ async def test_rate_limiter_spaces_calls() -> None:
     assert sleeps == [pytest.approx(2.0), pytest.approx(2.0)]  # 60 / 30 rpm
 
 
-def test_client_caps_rpm_at_35(tmp_path: Path) -> None:
+def test_client_paces_requests_by_llm_max_rpm(tmp_path: Path) -> None:
     client = _client(tmp_path, Recorder(), settings=_settings(llm_max_rpm=1000))
-    assert client.limiter.interval == pytest.approx(60 / 35)
+    assert client.limiter.interval == pytest.approx(60 / 1000)

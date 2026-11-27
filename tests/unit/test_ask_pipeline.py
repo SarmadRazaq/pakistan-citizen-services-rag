@@ -75,7 +75,7 @@ async def test_cited_answer_with_verified_quote() -> None:
     assert res.retrieval.candidates_fetched == len(res.retrieval.chunks) == 2  # every candidate returned
     assert res.retrieval.threshold == world.settings.tau_refuse
     assert res.guardrails.output == "passed" and res.guardrails.input == "passed"
-    assert res.provider.endpoint == "nvidia" and res.provider.attempts == 1
+    assert res.provider.endpoint == "hosted" and res.provider.attempts == 1
     assert res.language.question == res.language.answer == LanguageCode.EN
     assert {"guard_input", "understand", "retrieve", "generate", "guard_output", "total"} <= set(
         res.latency_ms

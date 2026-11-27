@@ -21,7 +21,7 @@ from app.core.resilience import CircuitBreaker, TokenBucket, backoff_delay, pars
 from app.generation.llm import LLMRouter, build_llm_clients
 from app.protocols import LLMClient, LLMMessage
 
-KEY = "nvapi-test-key-0123456789abcdefghij"
+KEY = "sk-test-key-0123456789abcdefghij"
 LOCAL = "qwen2.5:3b-instruct"
 MESSAGES = [LLMMessage("system", "Answer in JSON."), LLMMessage("user", "secret question about passports")]
 
@@ -87,7 +87,7 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = dict(
         _env_file=None,
         app_env="test",
-        nvidia_api_key=KEY,
+        llm_api_key=KEY,
         generation_models=["gen-a", "gen-b"],
         helper_model="helper-h",
         judge_model="judge-j",
@@ -143,11 +143,11 @@ async def test_success_parses_text_and_usage(make_router: Callable[..., tuple[LL
 
     result = await router.complete(MESSAGES, purpose="generate", max_tokens=200)
 
-    assert (result.text, result.endpoint, result.model) == ("hello", "nvidia", "gen-a")
+    assert (result.text, result.endpoint, result.model) == ("hello", "hosted", "gen-a")
     assert (result.attempts, result.input_tokens, result.output_tokens) == (1, 120, 30)
     assert result.degraded is False
     host, _, body, headers = script.calls[0]
-    assert host == "integrate.api.nvidia.com"
+    assert host == "api.openai.com"
     assert headers["authorization"] == f"Bearer {KEY}"
     assert body["response_format"] == {"type": "json_object"}
     assert body["max_tokens"] == 200
@@ -260,19 +260,19 @@ async def test_circuit_breaker_opens_after_three_failures_and_half_opens(
 
     for _ in range(3):
         assert (await router.complete(MESSAGES, purpose="generate")).model == "gen-b"
-    assert router.breaker_state("nvidia", "gen-a") == "open"
+    assert router.breaker_state("hosted", "gen-a") == "open"
 
     script.calls.clear()
     await router.complete(MESSAGES, purpose="generate")
     assert script.models() == ["gen-b"]  # open breaker: gen-a is not called at all
 
     clock.now += 61
-    assert router.breaker_state("nvidia", "gen-a") == "half_open"
+    assert router.breaker_state("hosted", "gen-a") == "half_open"
     script.calls.clear()
     script.plan["gen-a"] = [ok("recovered")]
     result = await router.complete(MESSAGES, purpose="generate")
     assert result.model == "gen-a"  # the half-open trial succeeded
-    assert router.breaker_state("nvidia", "gen-a") == "closed"
+    assert router.breaker_state("hosted", "gen-a") == "closed"
 
 
 def test_breaker_failed_trial_reopens() -> None:
@@ -329,7 +329,7 @@ async def test_everything_down_raises_503_llm_unavailable(
 async def test_missing_key_goes_straight_to_ollama(
     make_router: Callable[..., tuple[LLMRouter, Script]],
 ) -> None:
-    router, script = make_router({"gen-a": [ok()], LOCAL: [ok("local")]}, nvidia_api_key=None)
+    router, script = make_router({"gen-a": [ok()], LOCAL: [ok("local")]}, llm_api_key=None)
     result = await router.complete(MESSAGES, purpose="generate")
     assert (result.endpoint, result.degraded) == ("ollama", True)
     assert script.models() == [LOCAL]
@@ -339,7 +339,7 @@ async def test_missing_key_goes_straight_to_ollama(
 async def test_missing_key_and_ollama_down_is_503(
     make_router: Callable[..., tuple[LLMRouter, Script]],
 ) -> None:
-    router, _ = make_router({LOCAL: [status(500)]}, nvidia_api_key=None)
+    router, _ = make_router({LOCAL: [status(500)]}, llm_api_key=None)
     with pytest.raises(AppError) as info:
         await router.complete(MESSAGES, purpose="helper")
     assert info.value.code is ErrorCode.LLM_UNAVAILABLE
@@ -348,9 +348,9 @@ async def test_missing_key_and_ollama_down_is_503(
 async def test_purpose_chains(make_router: Callable[..., tuple[LLMRouter, Script]]) -> None:
     router, _ = make_router({}, generation_models=["gen-a", "helper-h", "gen-b"])
     keys = {p: [t.key for t in router.chain(p)] for p in ("generate", "helper", "judge")}  # type: ignore[arg-type]
-    assert keys["generate"] == ["nvidia:gen-a", "nvidia:helper-h", "nvidia:gen-b", f"ollama:{LOCAL}"]
-    assert keys["helper"] == ["nvidia:helper-h", "nvidia:gen-a", "nvidia:gen-b", f"ollama:{LOCAL}"]
-    assert keys["judge"] == ["nvidia:judge-j"]  # never judged by the local fallback
+    assert keys["generate"] == ["hosted:gen-a", "hosted:helper-h", "hosted:gen-b", f"ollama:{LOCAL}"]
+    assert keys["helper"] == ["hosted:helper-h", "hosted:gen-a", "hosted:gen-b", f"ollama:{LOCAL}"]
+    assert keys["judge"] == ["hosted:judge-j"]  # never judged by the local fallback
 
 
 async def test_judge_down_has_no_local_fallback(
@@ -423,7 +423,7 @@ async def test_cache_needs_eval_only_mode(make_router: Callable[..., tuple[LLMRo
 async def test_degraded_answers_are_not_cached(
     make_router: Callable[..., tuple[LLMRouter, Script]],
 ) -> None:
-    router, script = make_router({LOCAL: [ok("local")]}, cache=True, nvidia_api_key=None)
+    router, script = make_router({LOCAL: [ok("local")]}, cache=True, llm_api_key=None)
     await router.complete(MESSAGES, purpose="generate")
     await router.complete(MESSAGES, purpose="generate")
     assert len(script.calls) == 2
@@ -443,7 +443,7 @@ async def test_available_models_lists_hosted_ids(tmp_path: Path) -> None:
     )
     assert await router.available_models() == ["a/model", "z/model"]
 
-    no_key = LLMRouter(make_settings(tmp_path, nvidia_api_key=None))
+    no_key = LLMRouter(make_settings(tmp_path, llm_api_key=None))
     assert await no_key.available_models() == []
     await no_key.aclose()
 
@@ -476,7 +476,7 @@ async def test_logs_never_contain_key_prompt_or_answer(
 
 def test_build_llm_clients(tmp_path: Path) -> None:
     hosted, local_only = build_llm_clients(make_settings(tmp_path))
-    assert [t.endpoint for t in hosted.chain("generate")] == ["nvidia", "nvidia", "ollama"]
+    assert [t.endpoint for t in hosted.chain("generate")] == ["hosted", "hosted", "ollama"]
     assert [t.key for t in local_only.chain("generate")] == [f"ollama:{LOCAL}"]
     assert not hosted.cache_enabled and not local_only.cache_enabled
     cached, _ = build_llm_clients(make_settings(tmp_path), eval_cache=True)

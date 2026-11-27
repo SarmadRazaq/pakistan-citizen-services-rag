@@ -13,24 +13,25 @@ def make_settings(**kw: object) -> Settings:
 
 
 def test_no_prices_means_zero() -> None:
-    assert request_cost(make_settings(), [ModelUsage("big", "nvidia", 1000, 1000)]) == (0.0, 0.0)
+    assert request_cost(make_settings(), [ModelUsage("big", "hosted", 1000, 1000)]) == (0.0, 0.0)
 
 
-def test_free_tier_has_list_price_but_no_cost() -> None:
+def test_unbilled_hosted_calls_have_list_price_but_no_cost() -> None:
     cost, listed = request_cost(
-        make_settings(model_prices=PRICES), [ModelUsage("big", "nvidia", 1_000_000, 500_000)]
+        make_settings(model_prices=PRICES, llm_billed=False),
+        [ModelUsage("big", "hosted", 1_000_000, 500_000)],
     )
     assert cost == 0.0 and listed == pytest.approx(2.0)
 
 
-def test_billed_nvidia_counts_and_calls_are_summed() -> None:
-    calls = [ModelUsage("small", "nvidia", 2_000_000, 0), ModelUsage("big", "nvidia", 0, 1_000_000)]
-    cost, listed = request_cost(make_settings(model_prices=PRICES, llm_billed=True), calls)
+def test_hosted_calls_are_billed_by_default_and_summed() -> None:
+    calls = [ModelUsage("small", "hosted", 2_000_000, 0), ModelUsage("big", "hosted", 0, 1_000_000)]
+    cost, listed = request_cost(make_settings(model_prices=PRICES), calls)
     assert cost == pytest.approx(3.0) and listed == pytest.approx(3.0)
 
 
 def test_local_fallback_is_free_and_unknown_model_ignored() -> None:
-    calls = [ModelUsage("big", "ollama", 1_000_000, 0), ModelUsage("mystery", "nvidia", 5, 5)]
+    calls = [ModelUsage("big", "ollama", 1_000_000, 0), ModelUsage("mystery", "hosted", 5, 5)]
     cost, listed = request_cost(make_settings(model_prices=PRICES, llm_billed=True), calls)
     assert cost == 0.0 and listed == pytest.approx(1.0)
 

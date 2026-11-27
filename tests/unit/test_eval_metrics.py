@@ -167,7 +167,7 @@ def _ask(answer: str, **over: Any) -> dict[str, Any]:
         "retrieval": {"chunks": [_chunk(1, 13, used_in_context=True)]},
         "usage": {"input_tokens": 100, "output_tokens": 20},
         "latency_ms": {"total": 1200},
-        "provider": {"endpoint": "nvidia", "model": "m"},
+        "provider": {"endpoint": "hosted", "model": "m"},
     }
     body.update(over)
     return body

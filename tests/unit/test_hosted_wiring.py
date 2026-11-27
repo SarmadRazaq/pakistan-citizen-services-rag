@@ -1,4 +1,4 @@
-"""Settings, factory, injection-classifier builder and LLM chain wiring for hosted models."""
+"""Settings defaults, retrieval factory and LLM chain wiring for the hosted (OpenAI) setup."""
 
 from __future__ import annotations
 
@@ -10,19 +10,16 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.generation.llm import LLMRouter
-from app.guardrails.input_guards import build_injection_classifier
-from app.protocols import InjectionClassifier
 from app.retrieval.embedder import BGEM3Embedder
 from app.retrieval.factory import build_retrieval
-from app.retrieval.hosted import NvidiaEmbedder, NvidiaJailbreakClassifier, NvidiaReranker
-from app.retrieval.reranker import BGEReranker
+from app.retrieval.hosted import OpenAIEmbedder
+from app.retrieval.reranker import BGEReranker, NoReranker
 
-KEY = "nvapi-test-key-0123456789abcdefghij"
-JAILBREAK_URL = "https://ai.api.nvidia.com/v1/security/nvidia/nemoguard-jailbreak-detect"
+KEY = "sk-test-openai-0123456789abcdefghijkl"
 
 
 def make_settings(**overrides: Any) -> Settings:
-    values: dict[str, Any] = dict(_env_file=None, app_env="test", nvidia_api_key=KEY)
+    values: dict[str, Any] = dict(_env_file=None, app_env="test", llm_api_key=KEY, openai_api_key=KEY)
     values.update(overrides)
     return Settings(**values)
 
@@ -31,24 +28,38 @@ def make_settings(**overrides: Any) -> Settings:
 
 
 def test_hosted_setting_defaults() -> None:
-    s = make_settings(nvidia_api_key=None)
-    assert s.embedding_provider == "nvidia"
-    assert s.hosted_embedding_model == "baai/bge-m3"
+    s = make_settings(llm_api_key=None)
+    assert s.llm_base_url == "https://api.openai.com/v1"
+    assert s.generation_models == ["gpt-4.1-mini", "gpt-4o-mini"]
+    assert s.helper_model == "gpt-4.1-mini"
+    assert s.judge_model == "gpt-4o"
+    assert s.llm_max_rpm == 300
+    assert s.hosted_billed is True
+    assert s.embedding_provider == "openai"
+    assert s.openai_embedding_model == "text-embedding-3-large"
     assert s.embedding_dimension == 1024
-    assert s.reranker_provider == "nvidia"
-    assert s.hosted_reranker_model == "nvidia/llama-3.2-nv-rerankqa-1b-v2"
-    assert s.hosted_reranker_url is None
-    assert s.nvidia_retrieval_base_url == "https://ai.api.nvidia.com/v1/retrieval"
-    assert s.injection_provider == "nvidia"
-    assert s.jailbreak_detect_url == JAILBREAK_URL
+    assert s.reranker_provider == "local"
+    assert s.reranker_model == "BAAI/bge-reranker-v2-m3"
     assert s.local_fallback_enabled is False
     assert s.hosted_retrieval_timeout_s == 20.0
 
 
-@pytest.mark.parametrize("field", ["embedding_provider", "reranker_provider", "injection_provider"])
-def test_invalid_provider_rejected(field: str) -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("embedding_provider", "bogus"),
+        ("embedding_provider", "hosted"),
+        ("reranker_provider", "bogus"),
+        ("reranker_provider", "hosted"),
+    ],
+)
+def test_invalid_provider_rejected(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
-        make_settings(**{field: "bogus"})
+        make_settings(**{field: value})
+
+
+def test_removed_injection_provider_setting_is_ignored() -> None:
+    assert not hasattr(make_settings(), "injection_provider")
 
 
 def test_local_only_policy_requires_local_fallback() -> None:
@@ -67,11 +78,11 @@ def test_hosted_with_notice_without_fallback_is_valid() -> None:
 
 
 @pytest.mark.filterwarnings("ignore:Payload indexes have no effect:UserWarning")
-async def test_factory_defaults_build_hosted_models() -> None:
+async def test_factory_defaults_build_openai_embedder_and_local_reranker() -> None:
     settings = make_settings(embedding_dimension=768)
     bundle = build_retrieval(settings, qdrant_location=":memory:")
-    assert isinstance(bundle.embedder, NvidiaEmbedder)
-    assert isinstance(bundle.reranker, NvidiaReranker)
+    assert isinstance(bundle.embedder, OpenAIEmbedder)
+    assert isinstance(bundle.reranker, BGEReranker)
     assert bundle.store.dense_dim == 768 == bundle.embedder.dimension
     await bundle.startup()
     await bundle.shutdown()
@@ -90,29 +101,11 @@ async def test_factory_local_providers_build_bge_models() -> None:
 
 @pytest.mark.filterwarnings("ignore:Payload indexes have no effect:UserWarning")
 async def test_factory_mixed_providers() -> None:
-    settings = make_settings(embedding_provider="nvidia", reranker_provider="local")
+    settings = make_settings(embedding_provider="local", reranker_provider="none")
     bundle = build_retrieval(settings, qdrant_location=":memory:")
-    assert isinstance(bundle.embedder, NvidiaEmbedder)
-    assert isinstance(bundle.reranker, BGEReranker)
+    assert isinstance(bundle.embedder, BGEM3Embedder)
+    assert isinstance(bundle.reranker, NoReranker)
     await bundle.shutdown()
-
-
-# ---------------------------------------------------------------- injection classifier builder
-
-
-def test_builder_nvidia_with_key() -> None:
-    clf = build_injection_classifier(make_settings(injection_provider="nvidia"))
-    assert isinstance(clf, NvidiaJailbreakClassifier)
-    assert isinstance(clf, InjectionClassifier)
-
-
-def test_builder_none_provider() -> None:
-    assert build_injection_classifier(make_settings(injection_provider="none")) is None
-
-
-def test_builder_nvidia_without_key() -> None:
-    settings = make_settings(injection_provider="nvidia", nvidia_api_key=None)
-    assert build_injection_classifier(settings) is None
 
 
 # ---------------------------------------------------------------- LLM chain
@@ -126,18 +119,18 @@ def router(tmp_path: Path, **overrides: Any) -> LLMRouter:
 def test_chain_has_no_ollama_by_default(tmp_path: Path, purpose: str) -> None:
     chain = router(tmp_path).chain(purpose)  # type: ignore[arg-type]
     assert chain
-    assert all(t.endpoint == "nvidia" for t in chain)
+    assert all(t.endpoint == "hosted" for t in chain)
 
 
 @pytest.mark.parametrize("purpose", ["generate", "helper"])
 def test_chain_has_ollama_last_when_enabled(tmp_path: Path, purpose: str) -> None:
     chain = router(tmp_path, local_fallback_enabled=True).chain(purpose)  # type: ignore[arg-type]
     assert chain[-1].endpoint == "ollama"
-    assert all(t.endpoint == "nvidia" for t in chain[:-1])
+    assert all(t.endpoint == "hosted" for t in chain[:-1])
 
 
 def test_judge_chain_never_has_ollama(tmp_path: Path) -> None:
     for enabled in (False, True):
         chain = router(tmp_path, local_fallback_enabled=enabled).chain("judge")
         assert chain
-        assert all(t.endpoint == "nvidia" for t in chain)
+        assert all(t.endpoint == "hosted" for t in chain)

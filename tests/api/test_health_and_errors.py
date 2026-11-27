@@ -40,13 +40,13 @@ async def test_ready_503_when_required_down(make_app: Callable[..., FastAPI]) ->
     assert {c["name"]: c["ok"] for c in body["components"]} == {"qdrant": True, "llm_api": False}
 
 
-async def test_missing_nvidia_key_makes_readiness_fail_without_network() -> None:
+async def test_missing_llm_key_makes_readiness_fail_without_network() -> None:
     import httpx as _httpx
 
     from app.config import Settings
     from app.core.health import HealthService, default_probes
 
-    settings = Settings(_env_file=None, nvidia_api_key=None)  # type: ignore[call-arg]
+    settings = Settings(_env_file=None, llm_api_key=None)  # type: ignore[call-arg]
     async with _httpx.AsyncClient() as client:
         probes = {p.name: p for p in default_probes(settings, client)}
         ok, detail = await probes["llm_api"].check()
