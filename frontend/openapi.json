@@ -34,7 +34,7 @@
           "health"
         ],
         "summary": "Readiness",
-        "description": "Qdrant, the NVIDIA API (key + model list) and Ollama. 503 when a required one is down.",
+        "description": "Qdrant, the LLM API (key + model list) and Ollama. 503 when a required one is down.",
         "operationId": "ready_health_ready_get",
         "responses": {
           "200": {
@@ -2757,7 +2757,7 @@
           "endpoint": {
             "type": "string",
             "enum": [
-              "nvidia",
+              "hosted",
               "ollama",
               "none"
             ],
@@ -2977,6 +2977,24 @@
               }
             ],
             "title": "Page"
+          },
+          "page_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page End"
+          },
+          "section_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Section Path"
           },
           "chunk_index": {
             "type": "integer",

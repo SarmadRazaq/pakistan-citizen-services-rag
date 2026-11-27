@@ -33,7 +33,7 @@ export interface paths {
         };
         /**
          * Readiness
-         * @description Qdrant, the NVIDIA API (key + model list) and Ollama. 503 when a required one is down.
+         * @description Qdrant, the LLM API (key + model list) and Ollama. 503 when a required one is down.
          */
         get: operations["ready_health_ready_get"];
         put?: never;
@@ -746,7 +746,7 @@ export interface components {
              * Endpoint
              * @enum {string}
              */
-            endpoint: "nvidia" | "ollama" | "none";
+            endpoint: "hosted" | "ollama" | "none";
             /** Model */
             model?: string | null;
             /** Seller */
@@ -819,6 +819,10 @@ export interface components {
             effective_date?: string | null;
             /** Page */
             page?: number | null;
+            /** Page End */
+            page_end?: number | null;
+            /** Section Path */
+            section_path?: string[];
             /** Chunk Index */
             chunk_index: number;
             language?: components["schemas"]["LanguageCode"] | null;
