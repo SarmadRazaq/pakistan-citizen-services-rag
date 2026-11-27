@@ -12,6 +12,7 @@ from app.generation.answer import (
     evaluate_answer,
     extract_json_object,
     markers_in,
+    normalize_for_quote,
     parse_answer,
     strip_markers,
     verify_citations,
@@ -114,6 +115,41 @@ def test_forged_quotes_are_dropped(quote: str, reason: str) -> None:
     v = verify_citations(_answer("Fee [S1].", ("S1", quote)), SOURCES, min_score=90)
     assert not v.ok and v.dropped == (f"S1:{reason}",)
     assert v.uncited_markers == ("S1",)
+
+
+TABLE_CHUNK = (
+    "| | Name Change Requirements | | | | | | |\n"
+    "|---|---|---|---|---|---|---|---|\n"
+    "| | Resident Citizens | | Non-resident Citizens | |\n"
+    "| | 1. Application by / on behalf of applicant (Through Mobile App) "
+    "2. Computerized Birth Certificate (verified) of UC | | Fee Rs 4,500 | |"
+)
+
+
+def test_verbatim_cell_quote_of_a_wide_markdown_table_is_verified() -> None:
+    quote = "Application by / on behalf of applicant (Through Mobile App) 2. Computerized Birth Certificate"
+    v = verify_citations(_answer("Needs it [S1].", ("S1", quote)), {"S1": TABLE_CHUNK}, min_score=90)
+    assert v.ok and v.citations[0].score >= 90
+
+
+def test_quote_with_words_not_in_the_table_is_still_rejected() -> None:
+    quote = "Applicants must present a notarised affidavit from the district magistrate"
+    v = verify_citations(_answer("x [S1]", ("S1", quote)), {"S1": TABLE_CHUNK}, min_score=90)
+    assert not v.ok and v.dropped == ("S1:quote_not_found",)
+
+
+def test_changed_number_in_a_table_quote_is_still_rejected() -> None:
+    v = verify_citations(
+        _answer("x [S1]", ("S1", "Birth Certificate (verified) of UC Fee Rs 4,900")),
+        {"S1": TABLE_CHUNK},
+        min_score=90,
+    )
+    assert not v.ok and v.dropped == ("S1:quote_number_mismatch",)
+
+
+def test_ordinary_chunk_text_is_normalized_as_before() -> None:
+    assert normalize_for_quote("  Rs 9,000 — Urgent\n fee ") == "rs 9,000 - urgent fee"
+    assert normalize_for_quote("a - b: c") == "a - b: c"  # a dash or colon in prose is kept
 
 
 def test_invented_source_and_uncited_marker() -> None:

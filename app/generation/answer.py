@@ -163,9 +163,17 @@ _QUOTE_FOLD = str.maketrans(
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
 
+_TABLE_SEPARATOR_ROW = re.compile(r"^[|\-: ]+$", re.MULTILINE)
+
+
 def normalize_for_quote(text: str) -> str:
-    """NFKC + case folding + collapsed whitespace; typographic quotes, dashes and digits unified."""
+    """NFKC + case folding + collapsed whitespace; typographic quotes, dashes and digits unified.
+
+    Markdown table markup is ignored: separator rows are removed and every `|` becomes a space, so a
+    quote of a table cell (words only) matches a chunk stored as a wide Markdown table.
+    """
     text = unicodedata.normalize("NFKC", text).translate(_QUOTE_FOLD)
+    text = _TABLE_SEPARATOR_ROW.sub(" ", text).replace("|", " ")
     return " ".join(text.casefold().split())
 
 
