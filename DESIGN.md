@@ -3,7 +3,8 @@
 Citizen Services RAG: architecture and the justification of every decision in Section 2 of the brief.
 
 Where this file and the code disagree, the code is right. Numbers that have not been measured yet are
-marked **pending** and point to the place in [EVAL.md](EVAL.md) where they will appear. No number in this
+marked **pending** and point to the place in [EVAL.md](EVAL.md) where they will appear. The first measured
+numbers (27 Nov) are filled in below. No number in this
 file is estimated or invented.
 
 Terms such as Source, Document, Citation, Scope, Refusal, Partial answer, Notice and Referral are defined
@@ -306,9 +307,9 @@ Each decision has the same parts: Choice, Why, Alternatives rejected, Trade-offs
 
 Two facts apply to every "Evidence" line. The evaluation harness exists and is tested
 ([evals/](evals/), [tests/unit/test_eval_metrics.py](tests/unit/test_eval_metrics.py) and others), but a full
-evaluation run has not been saved yet. The golden set has 10 draft items, below the brief's minimum of 25
-(section 12). So choices that the brief wants "backed by evaluation results" are marked **pending** below. They
-are chosen on stated reasoning and on checks of the real files, and will be confirmed or changed by the numbers.
+evaluation was run on 27 Nov over a golden set of 48 items (33 test, 15 dev), and the numbers below come from
+it. The set is small, so a single question moves a rate by about 3 points. Choices it cannot yet separate are
+called out as such.
 
 ### 4.1 Corpus
 
@@ -359,9 +360,12 @@ unmodified copies) or written by the student and labelled as such in the manifes
 
 - The Source list and the problems found on each file: [corpus/SEED_SOURCES.md](corpus/SEED_SOURCES.md).
 - Status today: the eight NADRA pages and the English Registration Policy are saved locally
-  (`html for rag/`, gitignored). The full Official corpus has **not yet been ingested** into Qdrant, so the
-  final Document count and per-type counts are pending. The corpus table will be added to EVAL.md when it is.
-- Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Golden set" and "Contamination".
+  (`corpus/raw/manual/`, gitignored).
+- **Ingested (27 Nov):** 38 READY Documents (20 PDF, 18 HTML), 3,427 chunks. The 338-page Urdu Income Tax Rules
+  failed OCR and are not indexed.
+- **Contamination:** with no sources, the generator scores 0.29 out of 2 on the judge, against 0.96 with
+  retrieval (+0.68). The answers come from the documents, not from what the model already knew. See
+  [EVAL.md](EVAL.md) "Contamination".
 
 ### 4.2 Text extraction
 
@@ -426,8 +430,10 @@ need it. This is the main reason PDF ingestion can take minutes, which is what t
   [config.py](app/config.py).
 - OCR character error rate on real Urdu pages: **pending** (a human checkpoint in
   [docs/HUMAN_TODO.md](docs/HUMAN_TODO.md); script: [scripts/ocr_check.py](scripts/ocr_check.py)).
-- Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Failure analysis" (OCR and table-extraction
-  categories).
+- **Measured effect of table extraction:** the NADRA policy's requirement tables come out as wide Markdown
+  tables with many empty cells. In the first run, the citation check rejected verbatim quotes from them, and
+  answerable questions were refused. The check now ignores table markup (EVAL.md "Threshold tuning and the two
+  fixes"). OCR quality is not yet measured, because no OCR-only Source is in the golden set.
 
 ### 4.3 Chunking strategy
 
@@ -556,9 +562,13 @@ helper call) and searches all variants, then fuses the results (section 4.6).
   tokens, deterministic hashing and the absence of IDF.
 - [scripts/check_models.py](scripts/check_models.py) `--probe` is a live check of the key, the model id and the
   1024-dimension response.
-- **Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Configuration comparison" and "Multilingual"** (dense
-  retrieval Hit@k and MRR by language; the English-twin gap for Urdu and Roman Urdu questions). No
-  embedding-model comparison has been run, so the choice rests on the reasons above.
+- **Measured, by language** ([EVAL.md](EVAL.md) (run `approved-test-2026-11-27`, 33 approved test items), baseline config):
+  - English: Hit@5 0.875.
+  - Urdu script: Hit@5 1.000.
+  - Roman Urdu: Hit@5 0.857.
+
+  Cross-lingual retrieval works. No embedding-model comparison has been run, so the choice of this embedder
+  still rests on the reasons above.
 
 ### 4.5 Vector database
 
@@ -636,10 +646,10 @@ cross-encoder, with a relevance gate before generation.
 | `candidates_k` | 20 passed to the reranker | `config.py` |
 | RRF | `k=60`. Server-side between dense and sparse in Qdrant, then client-side across variants | `retriever.py` |
 | Dedupe | identical chunk hash collapses (a private copy beats the public one); near-duplicate text (rapidfuzz ratio at least 95, from `dedupe_cosine` 0.95) dropped below its better twin | `retriever.py` |
-| Reranker | `BAAI/bge-reranker-v2-m3` cross-encoder on the local GPU (`RERANKER_PROVIDER=local`), scores sigmoid-normalised to 0 to 1. Alternative by setting: `none` (the gate uses dense similarity) | `reranker.py` |
+| Reranker | `BAAI/bge-reranker-v2-m3` cross-encoder on the local GPU (`RERANKER_PROVIDER=local`), scores sigmoid-normalised to 0 to 1; each candidate's score is the max over the query variants, so cross-lingual and Roman Urdu questions are judged on the English rewrite too. Alternative by setting: `none` (the gate uses dense similarity) | `reranker.py` |
 | `context_k` (top-k used as context) | 5 (request `top_k` 1 to 10 overrides) | `config.py` |
 | `tau_keep` | 0.2: a chunk below this rerank score is not given to the model (at least one is always kept) | `config.py` |
-| `tau_refuse` | 0.3: if the best rerank score is below this, refuse without calling the generator | `config.py` |
+| `tau_refuse` | 0.2 (tuned on the dev split; was 0.3): if the best rerank score is below this, refuse without calling the generator | `config.py` |
 | Filters always applied | Scope (owner filter), servable status, optional `doc_ids`, `agencies`, `jurisdictions` from the request or detected in the question | `retrieve` node |
 | Freshness | When two public Documents on the same subject are cited, the newest Effective date is "current". Decided by the prompt at answer time, not stored (ADR below) | `prompts.py` |
 
@@ -684,10 +694,14 @@ Documents.
 | Latency | The rerank call, the helper call and (up to) three embedding calls add to latency. Variants and per-variant searches run in parallel with `asyncio.gather`. |
 | Refusal tuning | `tau_refuse` trades false refusals (answerable question refused) against hallucination risk. |
 
-**Threshold status.** `tau_keep` 0.2 and `tau_refuse` 0.3 were set for the local BGE reranker, which is the one
-in use again, but they are first guesses, not tuned on data. They have to be tuned on the dev split of the golden
-set. With `RERANKER_PROVIDER=none` they apply to dense similarity and must be re-tuned from scratch. The plan is to choose them on the dev split and report on
-the test split only, so the reported numbers are not tuned on.
+**Threshold status.** `tau_refuse` was tuned on the dev split only:
+- The highest-scoring unanswerable dev question scored 0.162.
+- The lowest answerable one within reach scored 0.205.
+- **0.2** was chosen, and the test split was not used for it.
+
+`tau_keep` stays at 0.2. With `RERANKER_PROVIDER=none` both thresholds apply to dense similarity and need their
+own tuning. The first run also exposed and fixed a reranking flaw: Roman Urdu questions were scored against the
+original question only. They now take the best score over the query variants (EVAL.md "Threshold tuning").
 
 **Evidence.**
 
@@ -696,9 +710,19 @@ the test split only, so the reported numbers are not tuned on.
   (45 tests including the relevance gate and filter relaxation).
 - Metrics are implemented and tested: Hit@1/3/5/10, Recall@5/10, MRR@10, nDCG@10 in
   [evals/metrics.py](evals/metrics.py) ([tests/unit/test_eval_metrics.py](tests/unit/test_eval_metrics.py)).
-- **Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Configuration comparison"** (`R4_hybrid_rerank`
-  baseline against `R1_dense_only` and `R5_hybrid_no_rerank`; winner rule fixed in advance: maximise MRR@10 on
-  the test split, tie-break Hit@5, then p95 latency). The service applies the `X-Eval-Config` override header
+- **Measured** ([EVAL.md](EVAL.md) (run `approved-test-2026-11-27`, 33 approved test items)). The winner rule was fixed in advance: maximise MRR@10 on the test split.
+
+  | Config | MRR@10 | Hit@5 | False refusal | Judge correctness (0-2) |
+  |---|---|---|---|---|
+  | `R4_hybrid_rerank` | 0.701 | 0.893 | 0.179 | 0.96 |
+  | `R1_dense_only` | 0.726 | 0.929 | 0.036 | 0.89 |
+  | `R5_hybrid_no_rerank` | 0.684 | 0.857 | 0.071 | 1.00 |
+
+  - **By the rule, dense-only wins,** by about one question out of 33.
+  - **But it gives twice as many wrong answers** (12 against 6). The reranker's value is in answer quality, not
+    ranking.
+  - **The default therefore stays hybrid plus rerank,** a deviation recorded in EVAL.md "Winner and what it
+    means". The service applies the `X-Eval-Config` override header
   (`retrieval_mode`, `rerank`, `generation_model`) for admin callers when `EVAL_OVERRIDES_ENABLED=true`
   ([app/core/eval_overrides.py](app/core/eval_overrides.py)), so `R1` and `R5` are real measurements on one
   running service. The harness still marks a row "NOT honoured" if the service does not echo the header.
@@ -785,10 +809,13 @@ A normal question makes:
 - one generation call, plus at most one JSON repair and one regeneration;
 - one embedding call per query variant (cached).
 
-The evaluation adds one `gpt-4o` judge call per question. Measured cost per question: **pending, see
-[EVAL.md](EVAL.md) "Ops" metrics.**
+The evaluation adds one `gpt-4o` judge call per question. **Measured cost per question: about $0.0015**
+(398 answered questions in `request_log`: on average 2,557 input and 385 output tokens, priced from
+`MODEL_PRICES`).
 
-**Latency.** Not measured yet. Per question it is the sum of:
+**Latency.** Measured on the approved test split, baseline config: **p50 11.3 s, p95 18.3 s**. Dense-only, which
+skips the local rerank, has p50 5.8 s. The reranker on the laptop GPU is the biggest step after generation. Per
+question the latency is the sum of:
 - the input guard (local);
 - the helper call;
 - embedding the variants;
@@ -798,7 +825,7 @@ The evaluation adds one `gpt-4o` judge call per question. Measured cost per ques
 - any retry.
 
 Every `/ask` response carries a `latency_ms` breakdown by node and by retrieval stage, and the eval harness
-reports p50 and p95. **Numbers: pending, see [EVAL.md](EVAL.md) "Metrics" (Ops row).**
+reports p50 and p95 (EVAL.md "Configuration comparison").
 
 **Context window.** Not a constraint. A prompt is the system prompt (about 600 tokens), up to 5 chunks of up to
 512 tokens (plus their attributes), and the question: a few thousand tokens, far inside the window of every
@@ -851,7 +878,10 @@ terms. Reranking runs on the local GPU.
   [tests/api/test_ask_api.py](tests/api/test_ask_api.py): the 503 path.
 - [tests/unit/test_cost.py](tests/unit/test_cost.py): cost per request.
 - Contamination control: `CB_closed_book` asks the generator the golden questions with no sources.
-- **Evaluation numbers: pending, see [EVAL.md](EVAL.md) "Generator comparison" and "Contamination".**
+- **Measured** ([EVAL.md](EVAL.md) (run `approved-test-2026-11-27`, 33 approved test items)). Judge correctness was equal (0.96 for both models), but `gpt-4o-mini` refused far more
+  often (false refusal 0.321 against 0.179). So `gpt-4.1-mini` stays first. Neither model meets the pre-set
+  refusal-accuracy bar of 0.8, and faithfulness (RAGAS) is not measured. Contamination: closed-book 0.29 against
+  0.96 with retrieval.
 
 ### 4.8 Prompt design
 
@@ -903,9 +933,13 @@ commas, validates it with pydantic, and does one repair call before giving up.
   paths, private-context policy.
 - [tests/unit/test_guard_output.py](tests/unit/test_guard_output.py) (22) and
   [tests/unit/test_guard_input.py](tests/unit/test_guard_input.py) (13).
-- **Evaluation numbers: pending, see [EVAL.md](EVAL.md)**: citation validity (answered items whose Citations all
-  point at gold chunks), the judge's citation-support score, refusal precision and recall and false-refusal rate
-  on unanswerable items and Near misses, answer-language accuracy.
+- **Measured** ([EVAL.md](EVAL.md) (run `approved-test-2026-11-27`, 33 approved test items), baseline):
+  - answer-language accuracy 1.000;
+  - all 7 unanswerable test and dev items refused (refusal F1 0.667 on test, limited by false refusals);
+  - citation validity 0.609.
+- The run also found a gap the quote check does not cover. An answer can quote real text and still state a
+  number taken from a different cited Source (q_tx_002 said Rs 25,000, while the cited ATL page says Rs 1,000).
+  A per-sentence number check is the planned fix (EVAL.md "Failure analysis").
 
 ---
 
@@ -1371,17 +1405,18 @@ Stated plainly, so a reader does not have to find them.
 
 **Evaluation (the biggest gap).**
 
-- **No saved evaluation run yet**, so every "Evaluation numbers: pending" line above is real. The harness is
-  built and tested; it has not been run against the real service with a real key.
-- **The golden set is incomplete:** 10 draft items (9 answerable, 1 unanswerable, in 3 languages), none yet
-  `approved`. The brief requires at least 25 including at least 5 unanswerable questions, and the plan was 59.
-  With so few items one question moves a rate by about 10 points.
+- **The golden set is small:** 48 items (33 test, 15 dev; 7 unanswerable; 16 in Urdu or Roman Urdu). One
+  question moves a rate by about 3 points. The items were drafted from the corpus text and reviewed against their
+  sources with AI assistance; the student's own review is still due.
+- **Roman Urdu answers are the weakest result:** judge correctness 0.29, against 1.12 for English, although
+  retrieval is close.
 - **The judge shares a vendor with the generator** (`gpt-4o` judging `gpt-4.1-mini`), so the kappa check matters
   more (section 4.7).
 - **No chunk-size or embedding-model comparison** has been set up (section 4.3, 4.4).
-- **Judge reliability** is checked by hand-labelling 30 answers and computing Cohen's kappa; none are labelled
-  yet.
-- `tau_keep` and `tau_refuse` are untuned first guesses (section 4.6).
+- **Judge reliability is unverified:** 30 answers are exported to `evals/human_labels.csv` for hand-labelling
+  and Cohen's kappa; none are labelled yet.
+- **Answers can mix numbers across sources** (section 4.8), and a contradiction question was answered from one
+  side only (q_rc_004).
 
 **Features not built.**
 
